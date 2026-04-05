@@ -55,11 +55,22 @@ jobs:
         scripts/config --file out/.config -e OVERLAY_FS
         make O=out olddefconfig
 
-        make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
+        if ! make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
              LLVM=1 LLVM_IAS=1 \
              LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
              OBJDUMP=llvm-objdump STRIP=llvm-strip \
-             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-; then
+             
+             echo "====================================================="
+             echo "BUILD FAILED! RUNNING SINGLE THREAD TO CATCH ERROR..."
+             echo "====================================================="
+             make -j1 O=out ARCH=arm64 CC=clang \
+                  LLVM=1 LLVM_IAS=1 \
+                  LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
+                  OBJDUMP=llvm-objdump STRIP=llvm-strip \
+                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+             exit 1
+        fi
 
     - name: Upload Kernel Artifact
       uses: actions/upload-artifact@v4
