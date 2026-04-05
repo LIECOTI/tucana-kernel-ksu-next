@@ -46,7 +46,7 @@ jobs:
         export CROSS_COMPILE=aarch64-linux-gnu-
         export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
-        make O=out vendor/sdmsteppe-perf_defconfig
+        make O=out vendor/sdmsteppe-perf_defconfig HOSTCFLAGS="-fcommon"
         
         scripts/config --file out/.config -e MODULES
         scripts/config --file out/.config -e KALLSYMS
@@ -59,14 +59,14 @@ jobs:
         scripts/config --file out/.config -e OVERLAY_FS
         scripts/config --file out/.config -d LTO -d LTO_CLANG -d LTO_CLANG_THIN
         
-        make O=out olddefconfig
+        make O=out olddefconfig HOSTCFLAGS="-fcommon"
         
         echo "=== DEBUG: CHECKING KCONFIG SURVIVAL ==="
         grep -E "CONFIG_MODULES|CONFIG_KPROBES|CONFIG_KSU" out/.config || echo "ERROR: CONFIGS WERE STRIPPED!"
         echo "=========================================="
 
         if ! make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
-             LLVM=1 LLVM_IAS=1 \
+             LLVM=1 LLVM_IAS=1 HOSTCFLAGS="-fcommon" \
              LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
              OBJDUMP=llvm-objdump STRIP=llvm-strip \
              CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-; then
@@ -76,7 +76,7 @@ jobs:
              echo "====================================================="
              
              make -j1 O=out ARCH=arm64 CC=clang \
-                  LLVM=1 LLVM_IAS=1 \
+                  LLVM=1 LLVM_IAS=1 HOSTCFLAGS="-fcommon" \
                   LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
                   OBJDUMP=llvm-objdump STRIP=llvm-strip \
                   CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
