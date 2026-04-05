@@ -33,14 +33,18 @@ jobs:
       run: |
         cd kernel_workspace
         
-        # Smart defconfig detector
-        DEFCONFIG=$(find arch/arm64/configs -type f -name "*tucana*perf_defconfig" -o -name "*sm7150*perf_defconfig" -o -name "*sm6150*perf_defconfig" | head -n 1 | sed 's|arch/arm64/configs/||')
-        echo "Auto-detected defconfig: $DEFCONFIG"
+        echo "=== DEBUG: LISTING ALL CONFIGS ==="
+        find arch/arm64/configs -name "*defconfig"
+        echo "=================================="
+        
+        DEFCONFIG=$(find arch/arm64/configs -name "*defconfig" | grep -i -E "tucana|sm6150|sm7150" | head -n 1 | sed 's|arch/arm64/configs/||')
         
         if [ -z "$DEFCONFIG" ]; then
-            echo "Error: Could not auto-detect defconfig! Fallback to vendor/tucana-perf_defconfig"
-            DEFCONFIG="vendor/tucana-perf_defconfig"
+            echo "Error: Defconfig not found! Please check the DEBUG list above."
+            exit 1
         fi
+        
+        echo "Auto-detected defconfig: $DEFCONFIG"
         
         export PATH="$GITHUB_WORKSPACE/clang_toolchain/bin:$PATH"
         export ARCH=arm64
