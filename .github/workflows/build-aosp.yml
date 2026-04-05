@@ -53,21 +53,20 @@ jobs:
         make O=out olddefconfig
 
         echo "Starting kernel compilation..."
-        if ! make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
+        make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
              HOSTCC=gcc HOSTCXX=g++ HOSTCFLAGS="-fcommon" \
              LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
              OBJDUMP=llvm-objdump STRIP=llvm-strip \
-             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- 2>&1 | tee build.log; then
-             
+             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- > build.log 2>&1 || {
              echo "====================================================="
              echo "BUILD FAILED! EXTRACTING EXACT ERROR FROM LOG:"
              echo "====================================================="
-             grep -i -C 5 "error:" build.log
+             grep -i -C 5 "error:" build.log || tail -n 50 build.log
              exit 1
-        fi
+        }
         
         echo "====================================================="
-        echo "BUILD SUCCESSFUL!:"
+        echo "BUILD SUCCESSFUL! FINDING KERNEL IMAGES:"
         echo "====================================================="
         find out/ -type f -name "Image*"
         find out/ -type f -name "*.dtb"
