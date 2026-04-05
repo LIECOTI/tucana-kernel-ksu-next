@@ -33,6 +33,15 @@ jobs:
       run: |
         cd kernel_workspace
         
+        # Smart defconfig detector
+        DEFCONFIG=$(find arch/arm64/configs -type f -name "*tucana*perf_defconfig" -o -name "*sm7150*perf_defconfig" -o -name "*sm6150*perf_defconfig" | head -n 1 | sed 's|arch/arm64/configs/||')
+        echo "Auto-detected defconfig: $DEFCONFIG"
+        
+        if [ -z "$DEFCONFIG" ]; then
+            echo "Error: Could not auto-detect defconfig! Fallback to vendor/tucana-perf_defconfig"
+            DEFCONFIG="vendor/tucana-perf_defconfig"
+        fi
+        
         export PATH="$GITHUB_WORKSPACE/clang_toolchain/bin:$PATH"
         export ARCH=arm64
         export SUBARCH=arm64
@@ -46,7 +55,7 @@ jobs:
         export CROSS_COMPILE=aarch64-linux-gnu-
         export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
-        make O=out vendor/sm6150-perf_defconfig
+        make O=out $DEFCONFIG
         
         scripts/config --file out/.config -e KPROBES
         scripts/config --file out/.config -e KPROBE_EVENTS
