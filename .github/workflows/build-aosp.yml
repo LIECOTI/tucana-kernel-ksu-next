@@ -29,10 +29,22 @@ jobs:
         cd kernel_workspace
         curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
 
-    - name: Fix Missing path_umount for 4.14
+    - name: Backport path_umount to fs/namespace.c
       run: |
-        cd kernel_workspace/KernelSU-Next
-        sed -i 's/path_umount/do_umount/g' kernel/kernel_umount.c
+        cd kernel_workspace
+        cat << 'EOF' >> fs/namespace.c
+        
+        int path_umount(struct path *path, int flags)
+        {
+            struct mount *mnt = real_mount(path->mnt);
+            int ret;
+            down_write(&namespace_sem);
+            ret = do_umount(mnt, flags);
+            up_write(&namespace_sem);
+            return ret;
+        }
+        EXPORT_SYMBOL(path_umount);
+        EOF
 
     - name: Compile Kernel
       run: |
@@ -61,7 +73,6 @@ jobs:
         make O=out vendor/sdmsteppe-perf_defconfig
         make O=out olddefconfig
 
-        # 1. Быстрая многопоточная сборка
         if ! make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
              LLVM=1 LLVM_IAS=1 \
              CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
@@ -72,7 +83,6 @@ jobs:
              echo "RUNNING FAST SINGLE THREAD TO REVEAL EXACT ERROR:"
              echo "====================================================="
              
-             # 2. Мгновенный поиск ошибки в 1 поток
              make -j1 O=out ARCH=arm64 CC=clang \
                   LLVM=1 LLVM_IAS=1 \
                   CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
