@@ -33,23 +33,6 @@ jobs:
       run: |
         cd kernel_workspace
         
-        sed -i 's/CONFIG_LTO=y/# CONFIG_LTO is not set/' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
-        sed -i 's/CONFIG_LTO_CLANG=y/# CONFIG_LTO_CLANG is not set/' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
-        sed -i 's/CONFIG_LTO_CLANG_THIN=y/# CONFIG_LTO_CLANG_THIN is not set/' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
-        
-        cat <<EOF >> arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
-        CONFIG_KPROBES=y
-        CONFIG_HAVE_KPROBES=y
-        CONFIG_KPROBE_EVENTS=y
-        CONFIG_FTRACE=y
-        CONFIG_DYNAMIC_FTRACE=y
-        CONFIG_KALLSYMS=y
-        CONFIG_KALLSYMS_ALL=y
-        CONFIG_KSU=y
-        CONFIG_KSU_KPROBE_HOOKS=y
-        CONFIG_OVERLAY_FS=y
-        EOF
-        
         export PATH="$GITHUB_WORKSPACE/clang_toolchain/bin:$PATH"
         export ARCH=arm64
         export SUBARCH=arm64
@@ -63,15 +46,36 @@ jobs:
         export CROSS_COMPILE=aarch64-linux-gnu-
         export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
+        # 1. Загружаем стандартный конфиг
         make O=out vendor/sdmsteppe-perf_defconfig
+        
+        # 2. Включаем модули (КРИТИЧЕСКИ ВАЖНО ДЛЯ 4.14) и всё остальное
+        scripts/config --file out/.config -e MODULES
+        scripts/config --file out/.config -e KALLSYMS
+        scripts/config --file out/.config -e KALLSYMS_ALL
+        scripts/config --file out/.config -e KPROBES
+        scripts/config --file out/.config -e HAVE_KPROBES
+        scripts/config --file out/.config -e KPROBE_EVENTS
+        scripts/config --file out/.config -e KSU
+        scripts/config --file out/.config -e KSU_KPROBE_HOOKS
+        scripts/config --file out/.config -e OVERLAY_FS
+        
+        # Отключаем LTO на всякий случай (часто конфликтует с Kprobes)
+        scripts/config --file out/.config -d LTO -d LTO_CLANG -d LTO_CLANG_THIN
+        
+        # 3. Сохраняем и проверяем зависимости
         make O=out olddefconfig
+        
+        echo "=== DEBUG: CHECKING KCONFIG SURVIVAL ==="
+        grep -E "CONFIG_MODULES|CONFIG_KPROBES|CONFIG_KSU" out/.config || echo "ERROR: CONFIGS WERE STRIPPED!"
+        echo "=========================================="
 
+        # 4. Компилируем
         make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
              LLVM=1 LLVM_IAS=1 \
              LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
              OBJDUMP=llvm-objdump STRIP=llvm-strip \
-             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-             CONFIG_KSU=y CONFIG_KSU_KPROBE_HOOKS=y
+             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
     - name: Upload Kernel Artifact
       uses: actions/upload-artifact@v4
