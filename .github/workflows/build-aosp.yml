@@ -5,7 +5,7 @@ on:
 
 jobs:
   build-kernel:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     
     steps:
     - name: Checkout Kernel Source
@@ -33,13 +33,14 @@ jobs:
       run: |
         cd kernel_workspace
         
+        sed -i 's/-std=gnu89/-std=gnu89 -fcommon/g' Makefile
+        
         export PATH="$GITHUB_WORKSPACE/clang_toolchain/bin:$PATH"
         export ARCH=arm64
         export SUBARCH=arm64
         
         make O=out vendor/sdmsteppe-perf_defconfig
         
-        # Врубаем модули и Kprobes, вырубаем защиты
         scripts/config --file out/.config -e MODULES
         scripts/config --file out/.config -e KPROBES
         scripts/config --file out/.config -e HAVE_KPROBES
@@ -47,11 +48,11 @@ jobs:
         scripts/config --file out/.config -e KSU
         scripts/config --file out/.config -e KSU_KPROBE_HOOKS
         scripts/config --file out/.config -e OVERLAY_FS
+        
         scripts/config --file out/.config -d LTO -d LTO_CLANG -d LTO_CLANG_THIN -d CFI_CLANG
         
         make O=out olddefconfig
 
-        # Запуск в 1 поток без фильтров. Вся правда будет в логе.
         make -j1 O=out ARCH=arm64 CC=clang \
              LLVM=1 LLVM_IAS=1 \
              CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
