@@ -33,19 +33,6 @@ jobs:
       run: |
         cd kernel_workspace
         
-        echo "=== DEBUG: LISTING ALL CONFIGS ==="
-        find arch/arm64/configs -name "*defconfig"
-        echo "=================================="
-        
-        DEFCONFIG=$(find arch/arm64/configs -name "*defconfig" | grep -i -E "tucana|sm6150|sm7150" | head -n 1 | sed 's|arch/arm64/configs/||')
-        
-        if [ -z "$DEFCONFIG" ]; then
-            echo "Error: Defconfig not found! Please check the DEBUG list above."
-            exit 1
-        fi
-        
-        echo "Auto-detected defconfig: $DEFCONFIG"
-        
         export PATH="$GITHUB_WORKSPACE/clang_toolchain/bin:$PATH"
         export ARCH=arm64
         export SUBARCH=arm64
@@ -59,7 +46,8 @@ jobs:
         export CROSS_COMPILE=aarch64-linux-gnu-
         export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
-        make O=out $DEFCONFIG
+        # Hardcoded correct defconfig!
+        make O=out vendor/sdmsteppe-perf_defconfig
         
         scripts/config --file out/.config -e KPROBES
         scripts/config --file out/.config -e KPROBE_EVENTS
