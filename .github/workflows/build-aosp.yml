@@ -52,6 +52,10 @@ jobs:
         
         sed -i 's/-std=gnu89/-std=gnu89 -fcommon/g' Makefile
         
+        # Remove broken automotive device trees from build
+        sed -i '/sa6155/d' arch/arm64/boot/dts/qcom/Makefile
+        sed -i '/sa8155/d' arch/arm64/boot/dts/qcom/Makefile
+        
         export PATH="$GITHUB_WORKSPACE/clang_toolchain/bin:$PATH"
         export ARCH=arm64
         export SUBARCH=arm64
