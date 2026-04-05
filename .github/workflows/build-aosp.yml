@@ -33,29 +33,37 @@ jobs:
       run: |
         cd kernel_workspace
         
+        # 1. Fix for dtc utility (HOSTCC)
         sed -i 's/-std=gnu89/-std=gnu89 -fcommon/g' Makefile
         
         export PATH="$GITHUB_WORKSPACE/clang_toolchain/bin:$PATH"
         export ARCH=arm64
         export SUBARCH=arm64
         
+        # 2. Strip conflicting protections
+        sed -i 's/CONFIG_LTO=y/# CONFIG_LTO is not set/' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
+        sed -i 's/CONFIG_LTO_CLANG=y/# CONFIG_LTO_CLANG is not set/' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
+        sed -i 's/CONFIG_CFI_CLANG=y/# CONFIG_CFI_CLANG is not set/' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
+        
+        # 3. Force add Kprobes directly to defconfig
+        cat <<EOF >> arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
+        CONFIG_MODULES=y
+        CONFIG_KPROBES=y
+        CONFIG_HAVE_KPROBES=y
+        CONFIG_KPROBE_EVENTS=y
+        CONFIG_KSU=y
+        CONFIG_KSU_KPROBE_HOOKS=y
+        CONFIG_OVERLAY_FS=y
+        EOF
+        
         make O=out vendor/sdmsteppe-perf_defconfig
-        
-        scripts/config --file out/.config -e MODULES
-        scripts/config --file out/.config -e KPROBES
-        scripts/config --file out/.config -e HAVE_KPROBES
-        scripts/config --file out/.config -e KPROBE_EVENTS
-        scripts/config --file out/.config -e KSU
-        scripts/config --file out/.config -e KSU_KPROBE_HOOKS
-        scripts/config --file out/.config -e OVERLAY_FS
-        
-        scripts/config --file out/.config -d LTO -d LTO_CLANG -d LTO_CLANG_THIN -d CFI_CLANG
-        
         make O=out olddefconfig
 
+        # 4. BRUTEFORCE variables through make command
         make -j1 O=out ARCH=arm64 CC=clang \
              LLVM=1 LLVM_IAS=1 \
-             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+             CONFIG_KSU=y CONFIG_KSU_KPROBE_HOOKS=y CONFIG_KPROBES=y CONFIG_KPROBE_EVENTS=y CONFIG_MODULES=y
 
     - name: Upload Kernel Artifact
       uses: actions/upload-artifact@v4
