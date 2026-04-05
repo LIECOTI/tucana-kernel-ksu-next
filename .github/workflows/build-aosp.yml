@@ -5,7 +5,7 @@ on:
 
 jobs:
   build-kernel:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
     
     steps:
     - name: Checkout Kernel Source
@@ -39,35 +39,22 @@ jobs:
         
         make O=out vendor/sdmsteppe-perf_defconfig
         
-        # Принудительно вырезаем всё, что мешает KPROBES
-        sed -i 's/CONFIG_LTO=y/# CONFIG_LTO is not set/' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
-        sed -i 's/CONFIG_LTO_CLANG=y/# CONFIG_LTO_CLANG is not set/' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
-        sed -i 's/CONFIG_CFI_CLANG=y/# CONFIG_CFI_CLANG is not set/' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
+        # Врубаем модули и Kprobes, вырубаем защиты
+        scripts/config --file out/.config -e MODULES
+        scripts/config --file out/.config -e KPROBES
+        scripts/config --file out/.config -e HAVE_KPROBES
+        scripts/config --file out/.config -e KPROBE_EVENTS
+        scripts/config --file out/.config -e KSU
+        scripts/config --file out/.config -e KSU_KPROBE_HOOKS
+        scripts/config --file out/.config -e OVERLAY_FS
+        scripts/config --file out/.config -d LTO -d LTO_CLANG -d LTO_CLANG_THIN -d CFI_CLANG
         
         make O=out olddefconfig
 
-        echo "Starting kernel compilation with BRUTEFORCE override..."
-        
-        # Передаем переменные напрямую в MAKE, игнорируя Kconfig
-        make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
-             HOSTCC=gcc HOSTCXX=g++ HOSTCFLAGS="-fcommon" \
-             LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
-             OBJDUMP=llvm-objdump STRIP=llvm-strip \
-             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-             CONFIG_MODULES=y CONFIG_KPROBES=y CONFIG_HAVE_KPROBES=y CONFIG_KPROBE_EVENTS=y \
-             CONFIG_KSU=y CONFIG_KSU_KPROBE_HOOKS=y > build.log 2>&1 || {
-             
-             echo "====================================================="
-             echo "BUILD FAILED! EXTRACTING EXACT ERROR FROM LOG:"
-             echo "====================================================="
-             grep -i -C 5 "error:" build.log || tail -n 50 build.log
-             exit 1
-        }
-        
-        echo "====================================================="
-        echo "BUILD SUCCESSFUL! FINDING KERNEL IMAGES:"
-        echo "====================================================="
-        find out/ -type f -name "Image*"
+        # Запуск в 1 поток без фильтров. Вся правда будет в логе.
+        make -j1 O=out ARCH=arm64 CC=clang \
+             LLVM=1 LLVM_IAS=1 \
+             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
     - name: Upload Kernel Artifact
       uses: actions/upload-artifact@v4
