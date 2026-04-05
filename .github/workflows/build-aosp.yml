@@ -39,25 +39,24 @@ jobs:
         
         make O=out vendor/sdmsteppe-perf_defconfig
         
-        scripts/config --file out/.config -e MODULES
-        scripts/config --file out/.config -e KALLSYMS
-        scripts/config --file out/.config -e KALLSYMS_ALL
-        scripts/config --file out/.config -e KPROBES
-        scripts/config --file out/.config -e HAVE_KPROBES
-        scripts/config --file out/.config -e KPROBE_EVENTS
-        scripts/config --file out/.config -e KSU
-        scripts/config --file out/.config -e KSU_KPROBE_HOOKS
-        scripts/config --file out/.config -e OVERLAY_FS
-        scripts/config --file out/.config -d LTO -d LTO_CLANG -d LTO_CLANG_THIN
+        # Принудительно вырезаем всё, что мешает KPROBES
+        sed -i 's/CONFIG_LTO=y/# CONFIG_LTO is not set/' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
+        sed -i 's/CONFIG_LTO_CLANG=y/# CONFIG_LTO_CLANG is not set/' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
+        sed -i 's/CONFIG_CFI_CLANG=y/# CONFIG_CFI_CLANG is not set/' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
         
         make O=out olddefconfig
 
-        echo "Starting kernel compilation..."
+        echo "Starting kernel compilation with BRUTEFORCE override..."
+        
+        # Передаем переменные напрямую в MAKE, игнорируя Kconfig
         make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
              HOSTCC=gcc HOSTCXX=g++ HOSTCFLAGS="-fcommon" \
              LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
              OBJDUMP=llvm-objdump STRIP=llvm-strip \
-             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- > build.log 2>&1 || {
+             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+             CONFIG_MODULES=y CONFIG_KPROBES=y CONFIG_HAVE_KPROBES=y CONFIG_KPROBE_EVENTS=y \
+             CONFIG_KSU=y CONFIG_KSU_KPROBE_HOOKS=y > build.log 2>&1 || {
+             
              echo "====================================================="
              echo "BUILD FAILED! EXTRACTING EXACT ERROR FROM LOG:"
              echo "====================================================="
@@ -69,7 +68,6 @@ jobs:
         echo "BUILD SUCCESSFUL! FINDING KERNEL IMAGES:"
         echo "====================================================="
         find out/ -type f -name "Image*"
-        find out/ -type f -name "*.dtb"
 
     - name: Upload Kernel Artifact
       uses: actions/upload-artifact@v4
