@@ -38,7 +38,7 @@ jobs:
         EXPORT_SYMBOL(path_umount);
         EOF
 
-    - name: Compile
+    - name: Compile vmlinux ONLY
       run: |
         cd kernel
         sed -i 's/-std=gnu89/-std=gnu89 -fcommon/g' Makefile
@@ -61,16 +61,24 @@ jobs:
         make O=out ARCH=arm64 vendor/sdmsteppe-perf_defconfig
         make O=out ARCH=arm64 olddefconfig
 
+        # Build ONLY vmlinux. This skips the broken dtbs entirely.
         make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
              LLVM=1 LLVM_IAS=1 \
              CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
              CONFIG_KSU=y CONFIG_KSU_KPROBE_HOOKS=y CONFIG_KPROBES=y CONFIG_KPROBE_EVENTS=y CONFIG_MODULES=y \
-             Image.gz
+             vmlinux
 
     - name: Prepare Artifact
       run: |
         mkdir -p output
-        find kernel/out/arch/arm64/boot -maxdepth 1 -type f -name "Image*" -exec cp {} output/ \;
+        export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+        
+        echo "Extracting raw Image from vmlinux..."
+        llvm-objcopy -O binary -R .note -R .note.gnu.build-id -R .comment -S kernel/out/vmlinux output/Image
+        
+        echo "Compressing to Image.gz..."
+        gzip -9 -c output/Image > output/Image.gz
+        
         echo "Files ready for upload:"
         ls -la output/
 
