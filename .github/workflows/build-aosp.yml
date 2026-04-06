@@ -52,9 +52,11 @@ jobs:
         
         sed -i 's/-std=gnu89/-std=gnu89 -fcommon/g' Makefile
         
-        # Remove broken automotive device trees from build
-        sed -i '/sa6155/d' arch/arm64/boot/dts/qcom/Makefile
-        sed -i '/sa8155/d' arch/arm64/boot/dts/qcom/Makefile
+        # Surgical removal of broken automotive and IoT DTBs from ALL Makefiles
+        find arch/arm64/boot/dts/ -name "Makefile" -exec sed -i 's/[^ ]*sa6155[^ ]*//g' {} +
+        find arch/arm64/boot/dts/ -name "Makefile" -exec sed -i 's/[^ ]*sa8155[^ ]*//g' {} +
+        find arch/arm64/boot/dts/ -name "Makefile" -exec sed -i 's/[^ ]*qcs410[^ ]*//g' {} +
+        find arch/arm64/boot/dts/ -name "Makefile" -exec sed -i 's/[^ ]*qcs610[^ ]*//g' {} +
         
         export PATH="$GITHUB_WORKSPACE/clang_toolchain/bin:$PATH"
         export ARCH=arm64
