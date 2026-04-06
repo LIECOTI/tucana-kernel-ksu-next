@@ -52,11 +52,10 @@ jobs:
         
         sed -i 's/-std=gnu89/-std=gnu89 -fcommon/g' Makefile
         
-        # Surgical removal of broken automotive and IoT DTBs from ALL Makefiles
-        find arch/arm64/boot/dts/ -name "Makefile" -exec sed -i 's/[^ ]*sa6155[^ ]*//g' {} +
-        find arch/arm64/boot/dts/ -name "Makefile" -exec sed -i 's/[^ ]*sa8155[^ ]*//g' {} +
-        find arch/arm64/boot/dts/ -name "Makefile" -exec sed -i 's/[^ ]*qcs410[^ ]*//g' {} +
-        find arch/arm64/boot/dts/ -name "Makefile" -exec sed -i 's/[^ ]*qcs610[^ ]*//g' {} +
+        # ULTIMATE REGEX FIX FOR BROKEN AUTOMOTIVE DTBs
+        sed -i -E 's/[a-zA-Z0-9_-]*sa6155[a-zA-Z0-9_-]*\.dtb[o]?//g' arch/arm64/boot/dts/qcom/Makefile
+        sed -i -E 's/[a-zA-Z0-9_-]*sa8155[a-zA-Z0-9_-]*\.dtb[o]?//g' arch/arm64/boot/dts/qcom/Makefile
+        sed -i -E 's/[a-zA-Z0-9_-]*qcs[a-zA-Z0-9_-]*\.dtb[o]?//g' arch/arm64/boot/dts/qcom/Makefile
         
         export PATH="$GITHUB_WORKSPACE/clang_toolchain/bin:$PATH"
         export ARCH=arm64
