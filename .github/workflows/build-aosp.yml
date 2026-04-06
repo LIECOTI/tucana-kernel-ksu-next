@@ -46,18 +46,17 @@ jobs:
         EXPORT_SYMBOL(path_umount);
         EOF
 
+    - name: Clean Broken Automotive DTBs
+      run: |
+        cd kernel_workspace
+        # Глобальный поиск и удаление автомобилей из ВСЕХ Makefile
+        find arch/arm64/boot/dts/ -type f -name "Makefile" -exec sed -i '/sa6155/d; /sa8155/d; /qcs410/d; /qcs610/d; /prairie/d' {} +
+
     - name: Compile Kernel
       run: |
         cd kernel_workspace
         
         sed -i 's/-std=gnu89/-std=gnu89 -fcommon/g' Makefile
-        
-        # PERL OBLITERATION OF BROKEN DTBs (Automotive and IoT)
-        perl -pi -e 's/\S*sa6155\S*//g' arch/arm64/boot/dts/qcom/Makefile
-        perl -pi -e 's/\S*sa8155\S*//g' arch/arm64/boot/dts/qcom/Makefile
-        perl -pi -e 's/\S*qcs410\S*//g' arch/arm64/boot/dts/qcom/Makefile
-        perl -pi -e 's/\S*qcs610\S*//g' arch/arm64/boot/dts/qcom/Makefile
-        perl -pi -e 's/\S*prairie\S*//g' arch/arm64/boot/dts/qcom/Makefile
         
         export PATH="$GITHUB_WORKSPACE/clang_toolchain/bin:$PATH"
         export ARCH=arm64
@@ -80,22 +79,10 @@ jobs:
         make O=out vendor/sdmsteppe-perf_defconfig
         make O=out olddefconfig
 
-        if ! make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
+        make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
              LLVM=1 LLVM_IAS=1 \
              CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-             CONFIG_KSU=y CONFIG_KSU_KPROBE_HOOKS=y CONFIG_KPROBES=y CONFIG_KPROBE_EVENTS=y CONFIG_MODULES=y; then
-             
-             echo "====================================================="
-             echo "MULTITHREADED BUILD FAILED!"
-             echo "RUNNING FAST SINGLE THREAD TO REVEAL EXACT ERROR:"
-             echo "====================================================="
-             
-             make -j1 O=out ARCH=arm64 CC=clang \
-                  LLVM=1 LLVM_IAS=1 \
-                  CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-                  CONFIG_KSU=y CONFIG_KSU_KPROBE_HOOKS=y CONFIG_KPROBES=y CONFIG_KPROBE_EVENTS=y CONFIG_MODULES=y
-             exit 1
-        fi
+             CONFIG_KSU=y CONFIG_KSU_KPROBE_HOOKS=y CONFIG_KPROBES=y CONFIG_KPROBE_EVENTS=y CONFIG_MODULES=y
 
     - name: Upload Kernel Artifact
       uses: actions/upload-artifact@v4
