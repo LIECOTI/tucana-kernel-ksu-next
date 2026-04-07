@@ -1,33 +1,41 @@
-name: Build Tucana AOSP Kernel
+name: Build Tucana AOSP Kernel with KernelSU Next
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-kernel:
     runs-on: ubuntu-22.04
     
     steps:
-    - name: Checkout Source
+    - name: Checkout Kernel Source
       uses: actions/checkout@v4
       with:
         repository: LineageOS/android_kernel_xiaomi_sm6150
         ref: lineage-23.2
-        path: kernel
+        path: kernel_workspace
 
-    - name: Setup Environment
+    - name: Setup Build Dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential bc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev libfl-dev curl wget git zip unzip ccache bison flex
-        git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
-
-    - name: Setup KernelSU Next
-      run: |
-        cd kernel
-        curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
         
+    - name: Clone Proton Clang Toolchain
+      run: |
+        git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang_toolchain
+
+    - name: Integrate KernelSU Next Legacy
+      run: |
+        cd kernel_workspace
+        curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
+
+    - name: Backport path_umount to fs/namespace.c
+      run: |
+        cd kernel_workspace
         cat << 'EOF' >> fs/namespace.c
-        int path_umount(struct path *path, int flags) {
+        
+        int path_umount(struct path *path, int flags)
+        {
             struct mount *mnt = real_mount(path->mnt);
             int ret;
             down_write(&namespace_sem);
@@ -38,10 +46,20 @@ jobs:
         EXPORT_SYMBOL(path_umount);
         EOF
 
-    - name: Compile vmlinux ONLY
+    - name: Compile Kernel
       run: |
-        cd kernel
+        cd kernel_workspace
+        
         sed -i 's/-std=gnu89/-std=gnu89 -fcommon/g' Makefile
+        
+        # НАСТОЯЩЕЕ обнуление мусорных DTS файлов (без кривого find)
+        for f in arch/arm64/boot/dts/qcom/sa*.dts arch/arm64/boot/dts/qcom/qcs*.dts arch/arm64/boot/dts/qcom/prairie*.dts; do
+            [ -f "$f" ] && echo "/dts-v1/; / { };" > "$f"
+        done
+        
+        export PATH="$GITHUB_WORKSPACE/clang_toolchain/bin:$PATH"
+        export ARCH=arm64
+        export SUBARCH=arm64
         
         sed -i 's/CONFIG_LTO=y/# CONFIG_LTO is not set/' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
         sed -i 's/CONFIG_LTO_CLANG=y/# CONFIG_LTO_CLANG is not set/' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
@@ -57,33 +75,23 @@ jobs:
         CONFIG_OVERLAY_FS=y
         EOF
         
-        export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
-        make O=out ARCH=arm64 vendor/sdmsteppe-perf_defconfig
-        make O=out ARCH=arm64 olddefconfig
+        make O=out vendor/sdmsteppe-perf_defconfig
+        make O=out olddefconfig
 
-        # Build ONLY vmlinux. This skips the broken dtbs entirely.
+        # Сборка ИСКЛЮЧИТЕЛЬНО нужных целей (Image.gz Image.gz-dtb)
         make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
              LLVM=1 LLVM_IAS=1 \
              CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
              CONFIG_KSU=y CONFIG_KSU_KPROBE_HOOKS=y CONFIG_KPROBES=y CONFIG_KPROBE_EVENTS=y CONFIG_MODULES=y \
-             vmlinux
+             Image.gz Image.gz-dtb || exit 1
 
     - name: Prepare Artifact
       run: |
         mkdir -p output
-        export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
-        
-        echo "Extracting raw Image from vmlinux..."
-        llvm-objcopy -O binary -R .note -R .note.gnu.build-id -R .comment -S kernel/out/vmlinux output/Image
-        
-        echo "Compressing to Image.gz..."
-        gzip -9 -c output/Image > output/Image.gz
-        
-        echo "Files ready for upload:"
-        ls -la output/
+        find kernel_workspace/out/arch/arm64/boot -maxdepth 1 -type f -name "Image*" -exec cp {} output/ \;
 
-    - name: Upload
+    - name: Upload Kernel Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: Kernel-Output
+        name: Tucana-Kernel-Output
         path: output/
