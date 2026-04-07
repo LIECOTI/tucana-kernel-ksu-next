@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-kernel:
     runs-on: ubuntu-22.04
     
     steps:
@@ -13,21 +13,29 @@ jobs:
       with:
         repository: LineageOS/android_kernel_xiaomi_sm6150
         ref: lineage-23.2
-        path: kernel
+        path: kernel_workspace
 
-    - name: Setup Environment
+    - name: Install Dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential bc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev libfl-dev curl wget git zip unzip ccache bison flex
-        git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
 
-    - name: Setup KernelSU Next
+    - name: Download Proton Clang
       run: |
-        cd kernel
+        git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang_toolchain
+
+    - name: Integrate KernelSU Next (Legacy)
+      run: |
+        cd kernel_workspace
         curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
-        
+
+    - name: Backport path_umount
+      run: |
+        cd kernel_workspace
         cat << 'EOF' >> fs/namespace.c
-        int path_umount(struct path *path, int flags) {
+        
+        int path_umount(struct path *path, int flags)
+        {
             struct mount *mnt = real_mount(path->mnt);
             int ret;
             down_write(&namespace_sem);
@@ -38,21 +46,14 @@ jobs:
         EXPORT_SYMBOL(path_umount);
         EOF
 
-    - name: Nuke Broken DTBs from Makefile
+    - name: Apply Compiler Fixes
       run: |
-        cd kernel
-        # Вырезаем сломанные файлы автомобилей и IoT из Makefile
-        sed -i -e 's/[^[:space:]]*sa6155[^[:space:]]*//g' \
-               -e 's/[^[:space:]]*sa8155[^[:space:]]*//g' \
-               -e 's/[^[:space:]]*qcs410[^[:space:]]*//g' \
-               -e 's/[^[:space:]]*qcs610[^[:space:]]*//g' \
-               -e 's/[^[:space:]]*prairie[^[:space:]]*//g' arch/arm64/boot/dts/qcom/Makefile
-
-    - name: Configure and Compile
-      run: |
-        cd kernel
+        cd kernel_workspace
         sed -i 's/-std=gnu89/-std=gnu89 -fcommon/g' Makefile
-        
+
+    - name: Configure Kconfig
+      run: |
+        cd kernel_workspace
         sed -i '/CONFIG_LTO/d; /CONFIG_CFI_CLANG/d' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
         
         cat <<EOF >> arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
@@ -65,25 +66,35 @@ jobs:
         CONFIG_OVERLAY_FS=y
         EOF
         
-        export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+        export PATH="$GITHUB_WORKSPACE/clang_toolchain/bin:$PATH"
         make O=out ARCH=arm64 vendor/sdmsteppe-perf_defconfig
         make O=out ARCH=arm64 olddefconfig
 
-        # Компилируем всё!
+    - name: Compile Core Kernel (vmlinux ONLY)
+      run: |
+        cd kernel_workspace
+        export PATH="$GITHUB_WORKSPACE/clang_toolchain/bin:$PATH"
+        
         make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
              LLVM=1 LLVM_IAS=1 \
              CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-             CONFIG_KSU=y CONFIG_KSU_KPROBE_HOOKS=y CONFIG_KPROBES=y CONFIG_KPROBE_EVENTS=y CONFIG_MODULES=y
+             CONFIG_KSU=y CONFIG_KSU_KPROBE_HOOKS=y CONFIG_KPROBES=y CONFIG_KPROBE_EVENTS=y CONFIG_MODULES=y \
+             vmlinux
 
-    - name: Prepare Artifact
+    - name: Extract Image and Compress (Bypass Makefile)
       run: |
+        cd kernel_workspace
+        export PATH="$GITHUB_WORKSPACE/clang_toolchain/bin:$PATH"
         mkdir -p output
-        find kernel/out/arch/arm64/boot -maxdepth 1 -type f -name "Image*" -exec cp {} output/ \;
-        find kernel/out/arch/arm64/boot/dts/qcom -maxdepth 1 -type f -name "sm6150*.dtb" -exec cp {} output/ \;
-        find kernel/out/arch/arm64/boot/dts/qcom -maxdepth 1 -type f -name "sm7150*.dtb" -exec cp {} output/ \;
+        
+        llvm-objcopy -O binary -R .note -R .note.gnu.build-id -R .comment -S out/vmlinux output/Image
+        
+        gzip -9 -c output/Image > output/Image.gz
+        
+        ls -la output/
 
-    - name: Upload
+    - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: Kernel-Output
-        path: output/
+        name: Tucana-Kernel-Output
+        path: kernel_workspace/output/
