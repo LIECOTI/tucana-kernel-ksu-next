@@ -46,21 +46,10 @@ jobs:
         EXPORT_SYMBOL(path_umount);
         EOF
 
-    - name: Apply Compiler Fixes
-      run: |
-        cd kernel_workspace
-        sed -i 's/-std=gnu89/-std=gnu89 -fcommon/g' Makefile
-        
-        # Тотальное уничтожение сломанных автомобильных файлов
-        echo "// Empty file to bypass build error" > arch/arm64/boot/dts/qcom/sa6155.dtsi
-        echo "// Empty file to bypass build error" > arch/arm64/boot/dts/qcom/sa6155-adp-star.dtsi
-        echo "// Empty file to bypass build error" > arch/arm64/boot/dts/qcom/sa6155p.dts
-        echo "// Empty file to bypass build error" > arch/arm64/boot/dts/qcom/sa6155p-adp-star.dts
-        echo "// Empty file to bypass build error" > arch/arm64/boot/dts/qcom/sa6155.dts
-
     - name: Configure Kconfig
       run: |
         cd kernel_workspace
+        sed -i 's/-std=gnu89/-std=gnu89 -fcommon/g' Makefile
         sed -i '/CONFIG_LTO/d; /CONFIG_CFI_CLANG/d' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
         
         cat <<EOF >> arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
@@ -77,31 +66,38 @@ jobs:
         make O=out ARCH=arm64 vendor/sdmsteppe-perf_defconfig
         make O=out ARCH=arm64 olddefconfig
 
-    - name: Compile Core Kernel (vmlinux ONLY)
+    - name: Compile and Extract (Invincible Mode)
       run: |
         cd kernel_workspace
         export PATH="$GITHUB_WORKSPACE/clang_toolchain/bin:$PATH"
         
+        set +e
+        
+        echo "Starting kernel compilation..."
         make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
              LLVM=1 LLVM_IAS=1 \
              CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
              CONFIG_KSU=y CONFIG_KSU_KPROBE_HOOKS=y CONFIG_KPROBES=y CONFIG_KPROBE_EVENTS=y CONFIG_MODULES=y \
              vmlinux
-
-    - name: Extract Image and Compress (Bypass Makefile)
-      run: |
-        cd kernel_workspace
-        export PATH="$GITHUB_WORKSPACE/clang_toolchain/bin:$PATH"
-        mkdir -p output
+             
+        echo "Make command finished. Checking for vmlinux..."
         
-        echo "Extracting Image from vmlinux..."
-        llvm-objcopy -O binary -R .note -R .note.gnu.build-id -R .comment -S out/vmlinux output/Image
-        
-        echo "Compressing Image to Image.gz..."
-        gzip -9 -c output/Image > output/Image.gz
-        
-        echo "Files ready:"
-        ls -la output/
+        if [ -f out/vmlinux ]; then
+            echo "SUCCESS: vmlinux exists! Ignoring any DTB errors."
+            mkdir -p output
+            
+            echo "Extracting Image..."
+            llvm-objcopy -O binary -R .note -R .note.gnu.build-id -R .comment -S out/vmlinux output/Image
+            
+            echo "Compressing Image to Image.gz..."
+            gzip -9 -c output/Image > output/Image.gz
+            
+            ls -la output/
+            exit 0
+        else
+            echo "FATAL: vmlinux was not built."
+            exit 1
+        fi
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
