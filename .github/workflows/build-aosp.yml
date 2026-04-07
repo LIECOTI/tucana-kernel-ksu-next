@@ -50,6 +50,8 @@ jobs:
       run: |
         cd kernel_workspace
         sed -i 's/-std=gnu89/-std=gnu89 -fcommon/g' Makefile
+        # Выжигаем сломанную плату sa6155 из списков сборки DTB
+        find arch/arm64/boot/dts -name "Makefile" -exec sed -i '/sa6155/d' {} +
 
     - name: Configure Kconfig
       run: |
