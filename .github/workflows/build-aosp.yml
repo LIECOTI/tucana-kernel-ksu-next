@@ -50,7 +50,13 @@ jobs:
       run: |
         cd kernel_workspace
         sed -i 's/-std=gnu89/-std=gnu89 -fcommon/g' Makefile
-        find arch/arm64/boot/dts -name "Makefile" -exec sed -i 's/sa6155/sm6150/g' {} +
+        
+        # Тотальное уничтожение сломанных автомобильных файлов
+        echo "// Empty file to bypass build error" > arch/arm64/boot/dts/qcom/sa6155.dtsi
+        echo "// Empty file to bypass build error" > arch/arm64/boot/dts/qcom/sa6155-adp-star.dtsi
+        echo "// Empty file to bypass build error" > arch/arm64/boot/dts/qcom/sa6155p.dts
+        echo "// Empty file to bypass build error" > arch/arm64/boot/dts/qcom/sa6155p-adp-star.dts
+        echo "// Empty file to bypass build error" > arch/arm64/boot/dts/qcom/sa6155.dts
 
     - name: Configure Kconfig
       run: |
@@ -80,14 +86,7 @@ jobs:
              LLVM=1 LLVM_IAS=1 \
              CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
              CONFIG_KSU=y CONFIG_KSU_KPROBE_HOOKS=y CONFIG_KPROBES=y CONFIG_KPROBE_EVENTS=y CONFIG_MODULES=y \
-             vmlinux || true
-             
-        if [ -f out/vmlinux ]; then
-            echo "SUCCESS: vmlinux compiled perfectly! Ignoring DTB errors."
-        else
-            echo "FATAL: vmlinux was not found."
-            exit 1
-        fi
+             vmlinux
 
     - name: Extract Image and Compress (Bypass Makefile)
       run: |
@@ -95,10 +94,13 @@ jobs:
         export PATH="$GITHUB_WORKSPACE/clang_toolchain/bin:$PATH"
         mkdir -p output
         
+        echo "Extracting Image from vmlinux..."
         llvm-objcopy -O binary -R .note -R .note.gnu.build-id -R .comment -S out/vmlinux output/Image
         
+        echo "Compressing Image to Image.gz..."
         gzip -9 -c output/Image > output/Image.gz
         
+        echo "Files ready:"
         ls -la output/
 
     - name: Upload Artifact
