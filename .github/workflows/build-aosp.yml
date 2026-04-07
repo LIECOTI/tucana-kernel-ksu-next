@@ -1,4 +1,4 @@
-name: Build Tucana AOSP Kernel with KernelSU Next
+name: Build Tucana AOSP Kernel
 
 on:
   workflow_dispatch:
@@ -15,21 +15,21 @@ jobs:
         ref: lineage-23.2
         path: kernel_workspace
 
-    - name: Setup Build Dependencies
+    - name: Install Dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential bc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev libfl-dev curl wget git zip unzip ccache bison flex
-        
-    - name: Clone Proton Clang Toolchain
+
+    - name: Download Proton Clang
       run: |
         git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang_toolchain
 
-    - name: Integrate KernelSU Next Legacy
+    - name: Integrate KernelSU Next (Legacy)
       run: |
         cd kernel_workspace
         curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
 
-    - name: Backport path_umount to fs/namespace.c
+    - name: Backport path_umount
       run: |
         cd kernel_workspace
         cat << 'EOF' >> fs/namespace.c
@@ -46,26 +46,23 @@ jobs:
         EXPORT_SYMBOL(path_umount);
         EOF
 
-    - name: Compile Kernel
+    - name: Apply Compiler Fixes
+      run: |
+        cd kernel_workspace
+        sed -i 's/-std=gnu89/-std=gnu89 -fcommon/g' Makefile
+
+    - name: Configure Kconfig and Defconfig
       run: |
         cd kernel_workspace
         
-        sed -i 's/-std=gnu89/-std=gnu89 -fcommon/g' Makefile
-        
-        # НАСТОЯЩЕЕ обнуление мусорных DTS файлов (без кривого find)
-        for f in arch/arm64/boot/dts/qcom/sa*.dts arch/arm64/boot/dts/qcom/qcs*.dts arch/arm64/boot/dts/qcom/prairie*.dts; do
-            [ -f "$f" ] && echo "/dts-v1/; / { };" > "$f"
-        done
-        
-        export PATH="$GITHUB_WORKSPACE/clang_toolchain/bin:$PATH"
-        export ARCH=arm64
-        export SUBARCH=arm64
-        
-        sed -i 's/CONFIG_LTO=y/# CONFIG_LTO is not set/' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
-        sed -i 's/CONFIG_LTO_CLANG=y/# CONFIG_LTO_CLANG is not set/' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
-        sed -i 's/CONFIG_CFI_CLANG=y/# CONFIG_CFI_CLANG is not set/' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
+        sed -i '/CONFIG_LTO/d; /CONFIG_CFI_CLANG/d' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
         
         cat <<EOF >> arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
+        # CONFIG_ARCH_SA6155 is not set
+        # CONFIG_ARCH_SA8155 is not set
+        # CONFIG_ARCH_QCS405 is not set
+        # CONFIG_ARCH_QCS410 is not set
+        # CONFIG_ARCH_QCS610 is not set
         CONFIG_MODULES=y
         CONFIG_KPROBES=y
         CONFIG_HAVE_KPROBES=y
@@ -74,24 +71,32 @@ jobs:
         CONFIG_KSU_KPROBE_HOOKS=y
         CONFIG_OVERLAY_FS=y
         EOF
+
+    - name: Build Kernel
+      run: |
+        cd kernel_workspace
+        export PATH="$GITHUB_WORKSPACE/clang_toolchain/bin:$PATH"
+        export ARCH=arm64
+        export SUBARCH=arm64
         
         make O=out vendor/sdmsteppe-perf_defconfig
         make O=out olddefconfig
 
-        # Сборка ИСКЛЮЧИТЕЛЬНО нужных целей (Image.gz Image.gz-dtb)
         make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
              LLVM=1 LLVM_IAS=1 \
-             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-             CONFIG_KSU=y CONFIG_KSU_KPROBE_HOOKS=y CONFIG_KPROBES=y CONFIG_KPROBE_EVENTS=y CONFIG_MODULES=y \
-             Image.gz Image.gz-dtb || exit 1
+             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
-    - name: Prepare Artifact
+    - name: Prepare Artifacts
       run: |
-        mkdir -p output
-        find kernel_workspace/out/arch/arm64/boot -maxdepth 1 -type f -name "Image*" -exec cp {} output/ \;
+        cd kernel_workspace
+        mkdir -p ../kernel_output
+        
+        find out/arch/arm64/boot -maxdepth 1 -type f -name "Image*" -exec cp {} ../kernel_output/ \;
+        find out/arch/arm64/boot/dts/qcom -maxdepth 1 -type f -name "sm6150*.dtb" -exec cp {} ../kernel_output/ \;
+        find out/arch/arm64/boot/dts/qcom -maxdepth 1 -type f -name "sm7150*.dtb" -exec cp {} ../kernel_output/ \;
 
-    - name: Upload Kernel Artifact
+    - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: Tucana-Kernel-Output
-        path: output/
+        path: kernel_output/
