@@ -51,18 +51,12 @@ jobs:
         cd kernel_workspace
         sed -i 's/-std=gnu89/-std=gnu89 -fcommon/g' Makefile
 
-    - name: Configure Kconfig and Defconfig
+    - name: Configure Kconfig
       run: |
         cd kernel_workspace
-        
         sed -i '/CONFIG_LTO/d; /CONFIG_CFI_CLANG/d' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
         
         cat <<EOF >> arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
-        # CONFIG_ARCH_SA6155 is not set
-        # CONFIG_ARCH_SA8155 is not set
-        # CONFIG_ARCH_QCS405 is not set
-        # CONFIG_ARCH_QCS410 is not set
-        # CONFIG_ARCH_QCS610 is not set
         CONFIG_MODULES=y
         CONFIG_KPROBES=y
         CONFIG_HAVE_KPROBES=y
@@ -71,32 +65,38 @@ jobs:
         CONFIG_KSU_KPROBE_HOOKS=y
         CONFIG_OVERLAY_FS=y
         EOF
+        
+        export PATH="$GITHUB_WORKSPACE/clang_toolchain/bin:$PATH"
+        make O=out ARCH=arm64 vendor/sdmsteppe-perf_defconfig
+        make O=out ARCH=arm64 olddefconfig
 
-    - name: Build Kernel
+    - name: Compile vmlinux ONLY (Bypass DTB completely)
       run: |
         cd kernel_workspace
         export PATH="$GITHUB_WORKSPACE/clang_toolchain/bin:$PATH"
-        export ARCH=arm64
-        export SUBARCH=arm64
         
-        make O=out vendor/sdmsteppe-perf_defconfig
-        make O=out olddefconfig
-
         make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
              LLVM=1 LLVM_IAS=1 \
-             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+             vmlinux
 
-    - name: Prepare Artifacts
+    - name: Extract and Compress Image
       run: |
         cd kernel_workspace
-        mkdir -p ../kernel_output
+        export PATH="$GITHUB_WORKSPACE/clang_toolchain/bin:$PATH"
+        mkdir -p output
         
-        find out/arch/arm64/boot -maxdepth 1 -type f -name "Image*" -exec cp {} ../kernel_output/ \;
-        find out/arch/arm64/boot/dts/qcom -maxdepth 1 -type f -name "sm6150*.dtb" -exec cp {} ../kernel_output/ \;
-        find out/arch/arm64/boot/dts/qcom -maxdepth 1 -type f -name "sm7150*.dtb" -exec cp {} ../kernel_output/ \;
+        echo "Extracting raw Image from vmlinux..."
+        llvm-objcopy -O binary -R .note -R .note.gnu.build-id -R .comment -S out/vmlinux output/Image
+        
+        echo "Compressing to Image.gz..."
+        gzip -9 -c output/Image > output/Image.gz
+        
+        echo "Final files ready:"
+        ls -la output/
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: Tucana-Kernel-Output
-        path: kernel_output/
+        path: kernel_workspace/output/
