@@ -33,25 +33,22 @@ jobs:
           cd kernel-source
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
 
-      - name: Patch Defconfig with KPROBES, KSU and CPU Fix
+      - name: Patch Defconfig with KPROBES and CPU Fix
         run: |
           cd kernel-source
           CONFIG_FILE="arch/arm64/configs/$DEFCONFIG"
           
           echo "Patching $CONFIG_FILE..."
-          
           echo "" >> $CONFIG_FILE
           
-          # Фикс ошибки NR_CPUS (указываем, что у нас 8 ядер)
+          # Фикс ошибки NR_CPUS
           echo "# CPU Fix" >> $CONFIG_FILE
           echo "CONFIG_NR_CPUS=8" >> $CONFIG_FILE
           
-          # KernelSU Next
-          echo "# KernelSU Next Configuration" >> $CONFIG_FILE
+          # Оставляем только базовые параметры KPROBES в конфиге
           echo "CONFIG_KPROBES=y" >> $CONFIG_FILE
+          echo "CONFIG_HAVE_KPROBES=y" >> $CONFIG_FILE
           echo "CONFIG_KPROBE_EVENTS=y" >> $CONFIG_FILE
-          echo "CONFIG_KSU_KPROBE_HOOKS=y" >> $CONFIG_FILE
-          echo "CONFIG_KSU=y" >> $CONFIG_FILE
           echo "CONFIG_OVERLAY_FS=y" >> $CONFIG_FILE
 
       - name: Build the Kernel
@@ -67,11 +64,14 @@ jobs:
           
           MAKE_ARGS="O=out ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabihf- AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip"
           
+          # Насильно передаем флаги KernelSU прямо в компилятор
+          KSU_FLAGS="CONFIG_KSU=y CONFIG_KSU_KPROBE_HOOKS=y"
+          
           # Генерация .config
           make $MAKE_ARGS $DEFCONFIG
           
-          # Сама сборка (Image.gz-dtb)
-          make -j$(nproc --all) $MAKE_ARGS
+          # Сама сборка (Image.gz-dtb) с принудительными флагами KSU
+          make -j$(nproc --all) $MAKE_ARGS $KSU_FLAGS
           
       - name: Prepare AnyKernel3 (Flashable ZIP)
         run: |
