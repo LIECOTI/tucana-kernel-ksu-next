@@ -18,11 +18,11 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison build-essential ccache curl flex git gnupg gperf imagemagick liblz4-tool libncurses5-dev libncurses5 libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 clang lld llvm gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
+          sudo apt-get install -y bc bison build-essential ccache curl flex git gnupg gperf imagemagick liblz4-tool libncurses5-dev libncurses5 libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 lld llvm gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
 
-      - name: Download Proton Clang (Toolchain)
+      - name: Download ZyC-Clang 17 (Modern Toolchain)
         run: |
-          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
+          git clone --depth=1 -b clang-17 https://gitlab.com/zyc-project/zyc-clang.git clang
 
       - name: Clone LineageOS Kernel Source
         run: |
@@ -33,14 +33,13 @@ jobs:
           cd kernel-source
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
 
-      - name: Patch Defconfig (CPU Fix only)
+      - name: Apply Source Patches (The Fix!)
         run: |
           cd kernel-source
-          CONFIG_FILE="arch/arm64/configs/$DEFCONFIG"
-          echo "Patching $CONFIG_FILE..."
-          echo "" >> $CONFIG_FILE
-          echo "# CPU Fix" >> $CONFIG_FILE
-          echo "CONFIG_NR_CPUS=8" >> $CONFIG_FILE
+          # Отключаем лимит tracepoint прямо в коде, чтобы не ломать конфиг процессора
+          echo "Patching tracepoint limitation..."
+          sed -i 's/#if NR_CPUS > 32/#if NR_CPUS > 128/g' include/trace/events/sched.h
+          sed -i 's/"Unsupported NR_CPUS for lb tracepoint."/"Bypassed"/g' include/trace/events/sched.h
 
       - name: Build the Kernel (Smart Error Catcher)
         run: |
@@ -55,10 +54,10 @@ jobs:
           
           MAKE_ARGS="O=out ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabihf- AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip"
           
-          # 1. Генерируем базовый .config
+          # 1. Генерируем базовый .config (без сломанного CPU Fix)
           make $MAKE_ARGS $DEFCONFIG
           
-          # 2. Железобетонно вписываем настройки KSU и KPROBES в готовый конфиг
+          # 2. Вписываем настройки KernelSU напрямую
           echo "CONFIG_KPROBES=y" >> out/.config
           echo "CONFIG_HAVE_KPROBES=y" >> out/.config
           echo "CONFIG_KPROBE_EVENTS=y" >> out/.config
@@ -69,12 +68,12 @@ jobs:
           # 3. Синхронизируем конфиг
           make $MAKE_ARGS olddefconfig
           
-          # 4. Собираем ядро с записью в лог и отключением немедленного падения
+          # 4. Собираем ядро с записью в лог
           set +e
           make -j$(nproc --all) $MAKE_ARGS 2>&1 | tee build.log
           BUILD_STATUS=${PIPESTATUS[0]}
           
-          # 5. Если есть ошибка - вытаскиваем ее!
+          # 5. Ловец ошибок
           if [ $BUILD_STATUS -ne 0 ]; then
             echo ""
             echo "========================================================"
