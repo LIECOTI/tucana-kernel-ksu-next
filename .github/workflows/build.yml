@@ -9,7 +9,6 @@ jobs:
     runs-on: ubuntu-22.04
     
     env:
-      # Используем объединенный конфиг LineageOS для платформы sm6150
       DEFCONFIG: vendor/sm6150-perf_defconfig
 
     steps:
@@ -19,8 +18,8 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          # Добавили пакеты gcc-aarch64-linux-gnu и gcc-arm-linux-gnueabihf для решения ошибки "command not found"
-          sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool libncurses5-dev libncurses5 libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 clang lld llvm gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
+          # Убрали конфликтующие gcc-multilib и 32-битные библиотеки хоста. Оставили только чистое ядро.
+          sudo apt-get install -y bc bison build-essential ccache curl flex git gnupg gperf imagemagick liblz4-tool libncurses5-dev libncurses5 libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 clang lld llvm gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
 
       - name: Download Proton Clang (Toolchain)
         run: |
@@ -56,14 +55,12 @@ jobs:
           cd kernel-source
           export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
           
-          # Явно указываем компиляторы
           export ARCH=arm64
           export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabihf-
           export CC=clang
           
-          # Параметры LLVM, чтобы минимизировать зависимость от GCC
           MAKE_ARGS="O=out ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabihf- AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip"
           
           # Генерация .config
