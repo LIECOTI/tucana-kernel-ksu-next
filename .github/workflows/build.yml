@@ -1,111 +1,96 @@
-name: Build KernelSU Next for Tucana
-
-on:
-  workflow_dispatch:
-
-jobs:
-  build:
-    runs-on: ubuntu-22.04
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bc bison build-essential ccache curl flex git gnupg gperf imagemagick liblz4-tool libncurses5-dev libncurses5 libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 lld llvm gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
-
-      - name: Download Toolchain
-        run: |
-          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
-
-      - name: Clone Kernel Source
-        run: |
-          git clone --depth=1 -b lineage-23.1 https://github.com/LineageOS/android_kernel_xiaomi_sm6150.git kernel-source
-
-      - name: Setup KernelSU Next
-        run: |
-          cd kernel-source
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
-
-      - name: Bruteforce Patches
-        run: |
-          cd kernel-source
-          
-          echo "1. Исправляем баг планировщика Snapdragon..."
-          sed -i 's/#if NR_CPUS > 32/#if NR_CPUS > 128/g' include/trace/events/sched.h
-          sed -i 's/"Unsupported NR_CPUS for lb tracepoint."/"Bypassed"/g' include/trace/events/sched.h
-          
-          echo "2. Вырезаем блокировку KPROBES из-за LTO..."
-          find arch kernel -type f -name "Kconfig*" -exec sed -i 's/depends on !LTO_CLANG//g' {} +
-          
-          echo "3. Взламываем проверку хуков внутри KernelSU..."
-          # Заменяем проверку ifeq на всегда истинную (ifeq (y,y))
-          sed -i 's/ifeq ($(CONFIG_KSU_KPROBE_HOOKS),y)/ifeq (y,y)/g' drivers/kernelsu/Kbuild
-
-      - name: Build Kernel
-        run: |
-          cd kernel-source
-          export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
-          export ARCH=arm64
-          export SUBARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CROSS_COMPILE_ARM32=arm-linux-gnueabihf-
-          export CC=clang
-          
-          # 1. Генерируем базовый конфиг
-          make vendor/sdmsteppe_defconfig
-          
-          # 2. Создаем файл с нашими Root-настройками
-          cat <<EOF > ksu.config
-          CONFIG_KPROBES=y
-          CONFIG_HAVE_KPROBES=y
-          CONFIG_KPROBE_EVENTS=y
-          CONFIG_OVERLAY_FS=y
-          CONFIG_KSU=y
-          CONFIG_KSU_KPROBE_HOOKS=y
-          EOF
-          
-          # 3. Сливаем базу + tucana + ksu с помощью ОФИЦИАЛЬНОГО скрипта
-          # Это гарантирует правильное объединение без удаления флагов
-          scripts/kconfig/merge_config.sh -m .config arch/arm64/configs/vendor/tucana.config ksu.config
-          make olddefconfig
-          
-          # 4. Собираем ядро! (Прошиваем флаги KSU прямо в мозг компилятора через KCFLAGS)
-          echo "Начинаю компиляцию ядра..."
-          set +e
-          make -j$(nproc --all) \
-            CC=clang \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
-            AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
-            KCFLAGS="-Wno-error -DCONFIG_KSU_KPROBE_HOOKS=1 -DCONFIG_KSU=1" 2>&1 | tee build.log
-            
-          BUILD_STATUS=${PIPESTATUS[0]}
-          
-          if [ $BUILD_STATUS -ne 0 ]; then
-            echo ""
-            echo "========================================================"
-            echo "🚨 НАСТОЯЩАЯ ОШИБКА СБОРКИ (СКОПИРУЙ МНЕ ЭТОТ ТЕКСТ) 🚨"
-            echo "========================================================"
-            grep -iE "error:|undefined reference" -B 2 -A 5 build.log
-            echo "========================================================"
-            exit 1
-          fi
-
-      - name: Prepare AnyKernel3
-        run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
-          rm -rf AnyKernel3/.git
-          cp kernel-source/arch/arm64/boot/Image.gz-dtb AnyKernel3/ || cp kernel-source/arch/arm64/boot/Image.gz AnyKernel3/
-          sed -i 's/device.name1=maguro/device.name1=tucana/g' AnyKernel3/anykernel.sh
-          sed -i 's/device.name2=toro/device.name2=MiNote10/g' AnyKernel3/anykernel.sh
-          sed -i 's/block=\/dev\/block\/platform\/omap\/omap_hsmmc.0\/by-name\/boot/block=auto/g' AnyKernel3/anykernel.sh
-          cd AnyKernel3
-          zip -r9 ../Tucana-KSU-Next-Kernel.zip *
-
-      - name: Upload ZIP
-        uses: actions/upload-artifact@v4
-        with:
-          name: Tucana-KernelSU-Next
-          path: Tucana-KSU-Next-Kernel.zip
+Run cd kernel-source
+  HOSTCC  scripts/basic/fixdep
+  HOSTCC  scripts/kconfig/conf.o
+  SHIPPED scripts/kconfig/zconf.tab.c
+  SHIPPED scripts/kconfig/zconf.lex.c
+  HOSTCC  scripts/kconfig/zconf.tab.o
+  HOSTLD  scripts/kconfig/conf
+#
+# configuration written to .config
+#
+Using .config as base
+Merging arch/arm64/configs/vendor/tucana.config
+Value of CONFIG_CSID_CAMERA is redefined by fragment arch/arm64/configs/vendor/tucana.config:
+Previous value: # CONFIG_CSID_CAMERA is not set
+New value: CONFIG_CSID_CAMERA=y
+Value of CONFIG_SOFTLED_CAMERA is redefined by fragment arch/arm64/configs/vendor/tucana.config:
+Previous value: # CONFIG_SOFTLED_CAMERA is not set
+New value: CONFIG_SOFTLED_CAMERA=y
+Value of CONFIG_MACH_XIAOMI_TUCANA is redefined by fragment arch/arm64/configs/vendor/tucana.config:
+Previous value: # CONFIG_MACH_XIAOMI_TUCANA is not set
+New value: CONFIG_MACH_XIAOMI_TUCANA=y
+Value of CONFIG_INPUT_FINGERPRINT is redefined by fragment arch/arm64/configs/vendor/tucana.config:
+Previous value: # CONFIG_INPUT_FINGERPRINT is not set
+New value: CONFIG_INPUT_FINGERPRINT=y
+Value of CONFIG_INPUT_DRV260X_HAPTICS is redefined by fragment arch/arm64/configs/vendor/tucana.config:
+Previous value: # CONFIG_INPUT_DRV260X_HAPTICS is not set
+New value: CONFIG_INPUT_DRV260X_HAPTICS=y
+Value of CONFIG_LEDS_QPNP_HAPTICS is redefined by fragment arch/arm64/configs/vendor/tucana.config:
+Previous value: CONFIG_LEDS_QPNP_HAPTICS=y
+New value: # CONFIG_LEDS_QPNP_HAPTICS is not set
+Value of CONFIG_LEDS_QPNP_VIBRATOR_LDO is redefined by fragment arch/arm64/configs/vendor/tucana.config:
+Previous value: CONFIG_LEDS_QPNP_VIBRATOR_LDO=y
+New value: # CONFIG_LEDS_QPNP_VIBRATOR_LDO is not set
+Value of CONFIG_RC_CORE is redefined by fragment arch/arm64/configs/vendor/tucana.config:
+Previous value: # CONFIG_RC_CORE is not set
+New value: CONFIG_RC_CORE=y
+Value of CONFIG_LEDS_AW3644 is redefined by fragment arch/arm64/configs/vendor/tucana.config:
+Previous value: # CONFIG_LEDS_AW3644 is not set
+New value: CONFIG_LEDS_AW3644=y
+Value of CONFIG_BATT_VERIFY_BY_DS28E16 is redefined by fragment arch/arm64/configs/vendor/tucana.config:
+Previous value: # CONFIG_BATT_VERIFY_BY_DS28E16 is not set
+New value: CONFIG_BATT_VERIFY_BY_DS28E16=y
+Value of CONFIG_BQ2597X_CHARGE_PUMP is redefined by fragment arch/arm64/configs/vendor/tucana.config:
+Previous value: # CONFIG_BQ2597X_CHARGE_PUMP is not set
+New value: CONFIG_BQ2597X_CHARGE_PUMP=y
+Value of CONFIG_ONEWIRE_GPIO is redefined by fragment arch/arm64/configs/vendor/tucana.config:
+Previous value: # CONFIG_ONEWIRE_GPIO is not set
+New value: CONFIG_ONEWIRE_GPIO=y
+Value of CONFIG_SMB1355_SLAVE_CHARGER is redefined by fragment arch/arm64/configs/vendor/tucana.config:
+Previous value: CONFIG_SMB1355_SLAVE_CHARGER=y
+New value: # CONFIG_SMB1355_SLAVE_CHARGER is not set
+  CC      scripts/mod/empty.o
+  HOSTCC  scripts/selinux/genheaders/genheaders
+  HOSTCC  scripts/mod/mk_elfconfig
+  HOSTCC  scripts/dtc/flattree.o
+  CC      scripts/mod/devicetable-offsets.s
+  MKELF   scripts/mod/elfconfig.h
+  CHK     scripts/mod/devicetable-offsets.h
+  HOSTCC  scripts/selinux/mdp/mdp
+  UPD     scripts/mod/devicetable-offsets.h
+  HOSTCC  scripts/mod/sumversion.o
+  SHIPPED scripts/genksyms/parse.tab.c
+  SHIPPED scripts/genksyms/lex.lex.c
+  SHIPPED scripts/genksyms/parse.tab.h
+  HOSTCC  scripts/genksyms/parse.tab.o
+  HOSTCC  scripts/dtc/fstree.o
+  HOSTCC  scripts/genksyms/lex.lex.o
+  HOSTCC  scripts/mod/modpost.o
+  HOSTCC  scripts/dtc/data.o
+  HOSTCC  scripts/kallsyms
+  HOSTCC  scripts/dtc/livetree.o
+  HOSTCC  scripts/dtc/treesource.o
+  HOSTLD  scripts/genksyms/genksyms
+  HOSTCC  scripts/mod/file2alias.o
+  HOSTCC  scripts/pnmtologo
+  HOSTCC  scripts/dtc/srcpos.o
+  HOSTCC  scripts/dtc/checks.o
+  HOSTCC  scripts/conmakehash
+  HOSTCC  scripts/dtc/util.o
+  SHIPPED scripts/dtc/dtc-lexer.lex.c
+  HOSTCC  scripts/recordmcount
+  HOSTCC  scripts/sortextable
+  HOSTLD  scripts/mod/modpost
+  SHIPPED scripts/dtc/dtc-parser.tab.h
+  SHIPPED scripts/dtc/dtc-parser.tab.c
+  HOSTCC  scripts/dtc/dtc-lexer.lex.o
+  HOSTCC  scripts/dtc/dtc-parser.tab.o
+  HOSTCC  scripts/asn1_compiler
+  HOSTCC  scripts/sign-file
+  HOSTCC  scripts/extract-cert
+  HOSTLD  scripts/dtc/dtc
+========================================================
+🚨 НАСТОЯЩАЯ ОШИБКА СБОРКИ (СКОПИРУЙ МНЕ ЭТОТ ТЕКСТ) 🚨
+========================================================
+========================================================
+Error: Process completed with exit code 1.
