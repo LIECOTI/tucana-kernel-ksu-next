@@ -1,17 +1,92 @@
-name: Find Defconfig
+name: Build KernelSU Next for Tucana
 
 on:
   workflow_dispatch:
 
 jobs:
-  find-configs:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: ubuntu-22.04
+
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache curl flex git gnupg gperf imagemagick liblz4-tool libncurses5-dev libncurses5 libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 lld llvm gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
+
+      - name: Download Toolchain
+        run: |
+          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
+
       - name: Clone Kernel Source
         run: |
           git clone --depth=1 -b lineage-23.1 https://github.com/LineageOS/android_kernel_xiaomi_sm6150.git kernel-source
+
+      - name: Setup KernelSU Next
+        run: |
           cd kernel-source
-          echo " "
-          echo "🚨 ВОТ СПИСОК ВСЕХ БАЗОВЫХ КОНФИГОВ 🚨"
-          find arch/arm64/configs -type f -name "*defconfig"
-          echo "======================================="
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
+
+      - name: Fix Qualcomm Tracepoint Bug
+        run: |
+          cd kernel-source
+          # Патч для старого бага Snapdragon
+          sed -i 's/#if NR_CPUS > 32/#if NR_CPUS > 128/g' include/trace/events/sched.h
+          sed -i 's/"Unsupported NR_CPUS for lb tracepoint."/"Bypassed"/g' include/trace/events/sched.h
+
+      - name: Build Kernel
+        run: |
+          cd kernel-source
+          export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabihf-
+          export CC=clang
+          
+          # 1. Генерируем базовый конфиг (Секрет раскрыт: sdmsteppe = sm6150)
+          echo "Применяю базовый конфиг sdmsteppe-perf_defconfig..."
+          make vendor/sdmsteppe-perf_defconfig
+          
+          # 2. Накладываем фрагмент твоего телефона (tucana.config)
+          echo "Применяю настройки Mi Note 10 (tucana)..."
+          cat arch/arm64/configs/vendor/tucana.config >> .config
+          
+          # 3. Накладываем настройки KernelSU Next
+          echo "Включаю Root-хуки..."
+          echo "CONFIG_KPROBES=y" >> .config
+          echo "CONFIG_HAVE_KPROBES=y" >> .config
+          echo "CONFIG_KPROBE_EVENTS=y" >> .config
+          echo "CONFIG_OVERLAY_FS=y" >> .config
+          echo "CONFIG_KSU=y" >> .config
+          echo "CONFIG_KSU_KPROBE_HOOKS=y" >> .config
+          
+          # Выравниваем получившийся конфиг
+          make olddefconfig
+          
+          # 4. Собираем ядро!
+          echo "Начинаю компиляцию ядра..."
+          make -j$(nproc --all) \
+            CC=clang \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
+            AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
+            KCFLAGS="-Wno-error"
+
+      - name: Prepare AnyKernel3
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
+          rm -rf AnyKernel3/.git
+          cp kernel-source/arch/arm64/boot/Image.gz-dtb AnyKernel3/ || cp kernel-source/arch/arm64/boot/Image.gz AnyKernel3/
+          sed -i 's/device.name1=maguro/device.name1=tucana/g' AnyKernel3/anykernel.sh
+          sed -i 's/device.name2=toro/device.name2=MiNote10/g' AnyKernel3/anykernel.sh
+          sed -i 's/block=\/dev\/block\/platform\/omap\/omap_hsmmc.0\/by-name\/boot/block=auto/g' AnyKernel3/anykernel.sh
+          cd AnyKernel3
+          zip -r9 ../Tucana-KSU-Next-Kernel.zip *
+
+      - name: Upload ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tucana-KernelSU-Next
+          path: Tucana-KSU-Next-Kernel.zip
