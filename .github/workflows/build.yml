@@ -7,9 +7,6 @@ jobs:
   build:
     name: Build Kernel
     runs-on: ubuntu-22.04
-    
-    env:
-      DEFCONFIG: vendor/sm6150-perf_defconfig
 
     steps:
       - name: Checkout Repository
@@ -33,31 +30,44 @@ jobs:
           cd kernel-source
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
 
-      - name: Apply Source Patches (The Fix!)
+      - name: Apply Source Patches
         run: |
           cd kernel-source
-          # Отключаем лимит tracepoint прямо в коде, чтобы не ломать конфиг процессора
           echo "Patching tracepoint limitation..."
           sed -i 's/#if NR_CPUS > 32/#if NR_CPUS > 128/g' include/trace/events/sched.h
           sed -i 's/"Unsupported NR_CPUS for lb tracepoint."/"Bypassed"/g' include/trace/events/sched.h
 
-      - name: Build the Kernel (Smart Error Catcher)
+      - name: Assemble Custom Defconfig (The Tucana Way)
         run: |
           cd kernel-source
           export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
-          
           export ARCH=arm64
-          export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabihf-
           export CC=clang
           
-          MAKE_ARGS="O=out ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabihf- AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip"
+          mkdir -p out
           
-          # 1. Генерируем базовый .config (без сломанного CPU Fix)
-          make $MAKE_ARGS $DEFCONFIG
+          echo "1. Ищем базовый конфиг процессора..."
+          BASE_CONFIG=$(find arch/arm64/configs -type f \( -name "*sm6150*perf*defconfig" -o -name "*sm6150*defconfig" \) | head -n 1)
           
-          # 2. Вписываем настройки KernelSU напрямую
+          if [ ! -z "$BASE_CONFIG" ]; then
+            echo "Найден базовый конфиг: $BASE_CONFIG"
+            cat $BASE_CONFIG > out/.config
+          else
+            echo "Базовый конфиг не найден, используем только tucana.config"
+            touch out/.config
+          fi
+          
+          echo "2. Добавляем специфичные драйверы Tucana..."
+          if [ -f "arch/arm64/configs/vendor/tucana.config" ]; then
+            cat arch/arm64/configs/vendor/tucana.config >> out/.config
+            echo "tucana.config успешно добавлен!"
+          else
+            echo "ВНИМАНИЕ: tucana.config не найден по этому пути!"
+          fi
+          
+          echo "3. Добавляем KernelSU Next..."
           echo "CONFIG_KPROBES=y" >> out/.config
           echo "CONFIG_HAVE_KPROBES=y" >> out/.config
           echo "CONFIG_KPROBE_EVENTS=y" >> out/.config
@@ -65,15 +75,24 @@ jobs:
           echo "CONFIG_KSU_KPROBE_HOOKS=y" >> out/.config
           echo "CONFIG_OVERLAY_FS=y" >> out/.config
           
-          # 3. Синхронизируем конфиг
-          make $MAKE_ARGS olddefconfig
+          echo "4. Выравниваем и применяем собранный Франкенштейн-конфиг..."
+          make O=out ARCH=arm64 CC=clang olddefconfig
+
+      - name: Build the Kernel
+        run: |
+          cd kernel-source
+          export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabihf-
+          export CC=clang
           
-          # 4. Собираем ядро с записью в лог
+          MAKE_ARGS="O=out ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabihf- AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip"
+          
           set +e
           make -j$(nproc --all) $MAKE_ARGS 2>&1 | tee build.log
           BUILD_STATUS=${PIPESTATUS[0]}
           
-          # 5. Ловец ошибок
           if [ $BUILD_STATUS -ne 0 ]; then
             echo ""
             echo "========================================================"
@@ -83,7 +102,7 @@ jobs:
             echo "========================================================"
             exit 1
           fi
-          
+
       - name: Prepare AnyKernel3 (Flashable ZIP)
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
