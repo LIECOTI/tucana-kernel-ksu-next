@@ -28,10 +28,10 @@ jobs:
           cd kernel-source
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
 
-      - name: Fix Qualcomm CPU Bug
+      - name: Fix Qualcomm Tracepoint Bug
         run: |
           cd kernel-source
-          # Единственный необходимый патч (без него С-код выдаст ошибку NR_CPUS, это баг исходников)
+          # Без этого патча ядро 4.14 на Snapdragon не соберется (ошибка NR_CPUS)
           sed -i 's/#if NR_CPUS > 32/#if NR_CPUS > 128/g' include/trace/events/sched.h
           sed -i 's/"Unsupported NR_CPUS for lb tracepoint."/"Bypassed"/g' include/trace/events/sched.h
 
@@ -39,32 +39,46 @@ jobs:
         run: |
           cd kernel-source
           export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
+          
+          # Обязательные переменные окружения
           export ARCH=arm64
+          export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabihf-
           export CC=clang
           
-          # 1. Генерируем конфиг процессора (стандартная команда Lineage)
+          # 1. Создаем базовый конфиг (используем точные пути от корня arch/arm64/configs)
           make vendor/sm6150-perf_defconfig
           
-          # 2. Добавляем конфиг телефона (стандартное слияние Linux)
+          # 2. Накладываем твой фрагмент tucana.config
           make vendor/tucana.config
           
-          # 3. Инструкция KernelSU: включаем KPROBES
+          # 3. Включаем KPROBES для KernelSU
           echo "CONFIG_KPROBES=y" >> .config
           echo "CONFIG_HAVE_KPROBES=y" >> .config
           echo "CONFIG_KPROBE_EVENTS=y" >> .config
           echo "CONFIG_OVERLAY_FS=y" >> .config
+          
+          # Применяем изменения
           make olddefconfig
           
-          # 4. Собираем ядро (передаем включение KSU напрямую, чтобы система его не вырезала)
-          make -j$(nproc --all) CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabihf- AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip CONFIG_KSU=y CONFIG_KSU_KPROBE_HOOKS=y
+          # 4. Собираем ядро (передаем CONFIG_KSU прямо в make)
+          make -j$(nproc --all) \
+            CC=clang \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
+            AR=llvm-ar \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CONFIG_KSU=y \
+            CONFIG_KSU_KPROBE_HOOKS=y
 
       - name: Prepare AnyKernel3
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
           rm -rf AnyKernel3/.git
-          # Ядро теперь лежит в стандартной папке исходников
           cp kernel-source/arch/arm64/boot/Image.gz-dtb AnyKernel3/ || cp kernel-source/arch/arm64/boot/Image.gz AnyKernel3/
           sed -i 's/device.name1=maguro/device.name1=tucana/g' AnyKernel3/anykernel.sh
           sed -i 's/device.name2=toro/device.name2=MiNote10/g' AnyKernel3/anykernel.sh
