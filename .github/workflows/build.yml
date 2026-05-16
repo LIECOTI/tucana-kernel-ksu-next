@@ -45,7 +45,7 @@ jobs:
           export CROSS_COMPILE_ARM32=arm-linux-gnueabihf-
           export CC=clang
           
-          # 1. Генерируем базовый конфиг (Секрет раскрыт: sdmsteppe = sm6150)
+          # 1. Генерируем базовый конфиг
           echo "Применяю базовый конфиг sdmsteppe-perf_defconfig..."
           make vendor/sdmsteppe-perf_defconfig
           
@@ -53,26 +53,26 @@ jobs:
           echo "Применяю настройки Mi Note 10 (tucana)..."
           cat arch/arm64/configs/vendor/tucana.config >> .config
           
-          # 3. Накладываем настройки KernelSU Next
-          echo "Включаю Root-хуки..."
+          # 3. Включаем KPROBES в конфиге (это система не удалит)
+          echo "Включаю KPROBES..."
           echo "CONFIG_KPROBES=y" >> .config
           echo "CONFIG_HAVE_KPROBES=y" >> .config
           echo "CONFIG_KPROBE_EVENTS=y" >> .config
           echo "CONFIG_OVERLAY_FS=y" >> .config
-          echo "CONFIG_KSU=y" >> .config
-          echo "CONFIG_KSU_KPROBE_HOOKS=y" >> .config
           
           # Выравниваем получившийся конфиг
           make olddefconfig
           
-          # 4. Собираем ядро!
+          # 4. Собираем ядро! (Жестко передаем флаги KSU прямо в make)
           echo "Начинаю компиляцию ядра..."
           make -j$(nproc --all) \
             CC=clang \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
             AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
-            KCFLAGS="-Wno-error"
+            KCFLAGS="-Wno-error" \
+            CONFIG_KSU=y \
+            CONFIG_KSU_KPROBE_HOOKS=y
 
       - name: Prepare AnyKernel3
         run: |
