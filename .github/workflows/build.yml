@@ -37,46 +37,32 @@ jobs:
           sed -i 's/#if NR_CPUS > 32/#if NR_CPUS > 128/g' include/trace/events/sched.h
           sed -i 's/"Unsupported NR_CPUS for lb tracepoint."/"Bypassed"/g' include/trace/events/sched.h
 
-      - name: Assemble Custom Defconfig (The Tucana Way)
+      - name: Assemble Custom Defconfig (The Safe Way)
         run: |
           cd kernel-source
-          export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
-          export ARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CROSS_COMPILE_ARM32=arm-linux-gnueabihf-
-          export CC=clang
           
-          mkdir -p out
-          
-          echo "1. Ищем базовый конфиг процессора..."
+          # 1. Находим базовый конфиг процессора
           BASE_CONFIG=$(find arch/arm64/configs -type f \( -name "*sm6150*perf*defconfig" -o -name "*sm6150*defconfig" \) | head -n 1)
+          echo "Базовый конфиг: $BASE_CONFIG"
           
-          if [ ! -z "$BASE_CONFIG" ]; then
-            echo "Найден базовый конфиг: $BASE_CONFIG"
-            cat $BASE_CONFIG > out/.config
-          else
-            echo "Базовый конфиг не найден, используем только tucana.config"
-            touch out/.config
-          fi
+          # 2. Создаем свой собственный монолитный дефконфиг прямо в исходниках
+          cp $BASE_CONFIG arch/arm64/configs/tucana_ksu_defconfig
           
-          echo "2. Добавляем специфичные драйверы Tucana..."
+          # 3. Добавляем фрагмент tucana.config
           if [ -f "arch/arm64/configs/vendor/tucana.config" ]; then
-            cat arch/arm64/configs/vendor/tucana.config >> out/.config
-            echo "tucana.config успешно добавлен!"
-          else
-            echo "ВНИМАНИЕ: tucana.config не найден по этому пути!"
+            cat arch/arm64/configs/vendor/tucana.config >> arch/arm64/configs/tucana_ksu_defconfig
+            echo "Фрагмент tucana.config добавлен."
           fi
           
-          echo "3. Добавляем KernelSU Next..."
-          echo "CONFIG_KPROBES=y" >> out/.config
-          echo "CONFIG_HAVE_KPROBES=y" >> out/.config
-          echo "CONFIG_KPROBE_EVENTS=y" >> out/.config
-          echo "CONFIG_KSU=y" >> out/.config
-          echo "CONFIG_KSU_KPROBE_HOOKS=y" >> out/.config
-          echo "CONFIG_OVERLAY_FS=y" >> out/.config
+          # 4. Добавляем только KPROBES (KSU передадим позже, чтобы не срезало)
+          echo "CONFIG_KPROBES=y" >> arch/arm64/configs/tucana_ksu_defconfig
+          echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/tucana_ksu_defconfig
+          echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/tucana_ksu_defconfig
+          echo "CONFIG_OVERLAY_FS=y" >> arch/arm64/configs/tucana_ksu_defconfig
           
-          echo "4. Выравниваем и применяем собранный Франкенштейн-конфиг..."
-          make O=out ARCH=arm64 CC=clang olddefconfig
+          # 5. Принудительно защищаем NO_HZ (чтобы баг точно не повторился)
+          echo "CONFIG_NO_HZ=y" >> arch/arm64/configs/tucana_ksu_defconfig
+          echo "CONFIG_NO_HZ_COMMON=y" >> arch/arm64/configs/tucana_ksu_defconfig
 
       - name: Build the Kernel
         run: |
@@ -89,8 +75,15 @@ jobs:
           
           MAKE_ARGS="O=out ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabihf- AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip"
           
+          # Передаем флаги KSU прямо в компилятор!
+          KSU_FLAGS="CONFIG_KSU=y CONFIG_KSU_KPROBE_HOOKS=y"
+          
+          # Генерируем конфиг
+          make $MAKE_ARGS tucana_ksu_defconfig
+          
+          # Собираем
           set +e
-          make -j$(nproc --all) $MAKE_ARGS 2>&1 | tee build.log
+          make -j$(nproc --all) $MAKE_ARGS $KSU_FLAGS 2>&1 | tee build.log
           BUILD_STATUS=${PIPESTATUS[0]}
           
           if [ $BUILD_STATUS -ne 0 ]; then
