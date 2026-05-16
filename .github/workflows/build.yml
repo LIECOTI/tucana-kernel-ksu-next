@@ -1,104 +1,17 @@
-name: Build KernelSU Next for Tucana
+name: Find Defconfig
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: ubuntu-22.04
-
+  find-configs:
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bc bison build-essential ccache curl flex git gnupg gperf imagemagick liblz4-tool libncurses5-dev libncurses5 libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 lld llvm gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
-
-      - name: Download Toolchain
-        run: |
-          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
-
       - name: Clone Kernel Source
         run: |
           git clone --depth=1 -b lineage-23.1 https://github.com/LineageOS/android_kernel_xiaomi_sm6150.git kernel-source
-
-      - name: Setup KernelSU Next
-        run: |
           cd kernel-source
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
-
-      - name: Fix Source Bugs (NR_CPUS)
-        run: |
-          cd kernel-source
-          sed -i 's/#if NR_CPUS > 32/#if NR_CPUS > 128/g' include/trace/events/sched.h
-          sed -i 's/"Unsupported NR_CPUS for lb tracepoint."/"Bypassed"/g' include/trace/events/sched.h
-
-      - name: Build Kernel (Smart Catcher)
-        run: |
-          cd kernel-source
-          export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
-          export ARCH=arm64
-          export SUBARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CROSS_COMPILE_ARM32=arm-linux-gnueabihf-
-          export CC=clang
-          
-          # Умный поиск конфига
-          CONF=$(find arch/arm64/configs/vendor/ -name "*defconfig" | grep -iE "sm6150|sdm710|xiaomi" | grep perf | head -n 1 | sed 's|arch/arm64/configs/||')
-          echo "Использую базовый конфиг: $CONF"
-
-          # 1. Генерируем базовый конфиг
-          make $CONF
-          
-          # 2. Накладываем фрагмент tucana.config
-          if [ -f "arch/arm64/configs/vendor/tucana.config" ]; then
-              scripts/kconfig/merge_config.sh -m .config arch/arm64/configs/vendor/tucana.config
-          fi
-          
-          # 3. Включаем KSU и KPROBES
-          echo "CONFIG_KPROBES=y" >> .config
-          echo "CONFIG_HAVE_KPROBES=y" >> .config
-          echo "CONFIG_KPROBE_EVENTS=y" >> .config
-          echo "CONFIG_OVERLAY_FS=y" >> .config
-          echo "CONFIG_KSU=y" >> .config
-          echo "CONFIG_KSU_KPROBE_HOOKS=y" >> .config
-          
-          make olddefconfig
-          
-          # 4. Сборка с ловцом ошибок и отключением -Werror
-          set +e
-          make -j$(nproc --all) \
-            CC=clang \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
-            AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
-            KCFLAGS="-Wno-error" \
-            2>&1 | tee build.log
-          
-          BUILD_STATUS=${PIPESTATUS[0]}
-          
-          if [ $BUILD_STATUS -ne 0 ]; then
-            echo "========================================================"
-            echo "🚨 ОШИБКА НАЙДЕНА:"
-            grep -iE "error:|fatal error:|undefined reference" -B 3 -A 5 build.log | head -n 20
-            echo "========================================================"
-            exit 1
-          fi
-
-      - name: Prepare AnyKernel3
-        run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
-          rm -rf AnyKernel3/.git
-          cp kernel-source/arch/arm64/boot/Image.gz-dtb AnyKernel3/ || cp kernel-source/arch/arm64/boot/Image.gz AnyKernel3/
-          sed -i 's/device.name1=maguro/device.name1=tucana/g' AnyKernel3/anykernel.sh
-          sed -i 's/device.name2=toro/device.name2=MiNote10/g' AnyKernel3/anykernel.sh
-          sed -i 's/block=\/dev\/block\/platform\/omap\/omap_hsmmc.0\/by-name\/boot/block=auto/g' AnyKernel3/anykernel.sh
-          cd AnyKernel3
-          zip -r9 ../Tucana-KSU-Next-Kernel.zip *
-
-      - name: Upload ZIP
-        uses: actions/upload-artifact@v4
-        with:
-          name: Tucana-KernelSU-Next
-          path: Tucana-KSU-Next-Kernel.zip
+          echo " "
+          echo "🚨 ВОТ СПИСОК ВСЕХ БАЗОВЫХ КОНФИГОВ 🚨"
+          find arch/arm64/configs -type f -name "*defconfig"
+          echo "======================================="
