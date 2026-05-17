@@ -23,10 +23,9 @@ jobs:
         run: |
           git clone --depth=1 -b lineage-23.1 https://github.com/LineageOS/android_kernel_xiaomi_sm6150.git kernel-source
 
-      - name: Setup KernelSU Next (Strictly Official)
+      - name: Setup KernelSU Next
         run: |
           cd kernel-source
-          # Official instruction: use legacy for 4.14 non-GKI
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
 
       - name: Apply Safe Patches
@@ -37,7 +36,7 @@ jobs:
           sed -i 's/#if NR_CPUS > 32/#if NR_CPUS > 128/g' include/trace/events/sched.h
           sed -i 's/"Unsupported NR_CPUS for lb tracepoint."/"Bypassed"/g' include/trace/events/sched.h
           
-          # Allow KPROBES to be enabled alongside LTO_CLANG (prevents Kconfig from dropping KSU hooks)
+          # Allow KPROBES to be enabled alongside LTO_CLANG
           find arch kernel -type f -name "Kconfig*" -exec sed -i 's/depends on !LTO_CLANG//g' {} +
 
       - name: Build Kernel
@@ -51,29 +50,23 @@ jobs:
           export CROSS_COMPILE_ARM32=arm-linux-gnueabihf-
           export CC=clang
           
-          # Fix DTC compiler errors on newer Ubuntu versions
           export HOSTCFLAGS="-fcommon"
           export HOSTCXXFLAGS="-fcommon"
           
-          # 1. Generate base defconfig
           make vendor/sdmsteppe-perf_defconfig
-          
-          # 2. Append device fragment
           cat arch/arm64/configs/vendor/tucana.config >> .config
           
-          # 3. Add KSU configs according to official docs
           echo "CONFIG_KPROBES=y" >> .config
           echo "CONFIG_KPROBE_EVENTS=y" >> .config
           echo "CONFIG_KSU_KPROBE_HOOKS=y" >> .config
           echo "CONFIG_KSU=y" >> .config
           echo "CONFIG_OVERLAY_FS=y" >> .config
           
-          # Finalize config
           make olddefconfig
           
-          # 4. Compile the kernel
           echo "Starting kernel compilation..."
-          set +e
+          # set -o pipefail заставит скрипт честно упасть, если make выдаст ошибку
+          set -o pipefail
           make -j$(nproc --all) \
             CC=clang \
             CROSS_COMPILE=aarch64-linux-gnu- \
@@ -93,7 +86,8 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
           rm -rf AnyKernel3/.git
-          cp kernel-source/arch/arm64/boot/Image.gz-dtb AnyKernel3/ || cp kernel-source/arch/arm64/boot/Image.gz AnyKernel3/
+          # Ищем любой вариант ядра (с dtb, просто gz или несжатый Image)
+          cp kernel-source/arch/arm64/boot/Image.gz-dtb AnyKernel3/ || cp kernel-source/arch/arm64/boot/Image.gz AnyKernel3/ || cp kernel-source/arch/arm64/boot/Image AnyKernel3/
           sed -i 's/device.name1=maguro/device.name1=tucana/g' AnyKernel3/anykernel.sh
           sed -i 's/device.name2=toro/device.name2=MiNote10/g' AnyKernel3/anykernel.sh
           sed -i 's/block=\/dev\/block\/platform\/omap\/omap_hsmmc.0\/by-name\/boot/block=auto/g' AnyKernel3/anykernel.sh
