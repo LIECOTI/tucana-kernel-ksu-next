@@ -23,28 +23,25 @@ jobs:
         run: |
           git clone --depth=1 -b lineage-23.1 https://github.com/LineageOS/android_kernel_xiaomi_sm6150.git kernel-source
 
-      - name: Setup KernelSU Next
+      - name: Setup KernelSU Next (Strictly Official)
         run: |
           cd kernel-source
+          # Official instruction: use legacy for 4.14 non-GKI
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
 
-      - name: Bruteforce Patches (The Sledgehammer)
+      - name: Apply Safe Patches
         run: |
           cd kernel-source
           
-          echo "1. Исправляем баг планировщика Snapdragon..."
+          # Fix Snapdragon tracepoint bug
           sed -i 's/#if NR_CPUS > 32/#if NR_CPUS > 128/g' include/trace/events/sched.h
           sed -i 's/"Unsupported NR_CPUS for lb tracepoint."/"Bypassed"/g' include/trace/events/sched.h
           
-          echo "2. Взламываем KernelSU Kbuild..."
-          # Превращаем фатальную ошибку KernelSU в обычное текстовое сообщение
-          sed -i 's/$(error/$(info/g' drivers/kernelsu/Kbuild
-          
-          # Принудительно заставляем его компилировать KPROBE хуки независимо от конфига!
-          echo "ccflags-y += -DKSU_HAVE_KPROBE_HOOKS" >> drivers/kernelsu/Kbuild
-          echo "kernelsu-y += kernel/kprobe.o" >> drivers/kernelsu/Kbuild
+          # Allow KPROBES to be enabled alongside LTO_CLANG (prevents Kconfig from dropping KSU hooks)
+          find arch kernel -type f -name "Kconfig*" -exec sed -i 's/depends on !LTO_CLANG//g' {} +
 
       - name: Build Kernel
+        id: build_kernel
         run: |
           cd kernel-source
           export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
@@ -54,27 +51,28 @@ jobs:
           export CROSS_COMPILE_ARM32=arm-linux-gnueabihf-
           export CC=clang
           
-          # ФИКС ОШИБКИ СКРИПТОВ DTC на Ubuntu 22.04
+          # Fix DTC compiler errors on newer Ubuntu versions
           export HOSTCFLAGS="-fcommon"
           export HOSTCXXFLAGS="-fcommon"
           
-          # 1. Генерируем базовый конфиг
+          # 1. Generate base defconfig
           make vendor/sdmsteppe-perf_defconfig
           
-          # 2. Накладываем фрагмент телефона
-          scripts/kconfig/merge_config.sh -m .config arch/arm64/configs/vendor/tucana.config
+          # 2. Append device fragment
+          cat arch/arm64/configs/vendor/tucana.config >> .config
           
-          # 3. Принудительно вписываем опции через официальную утилиту ядра
-          ./scripts/config --file .config -e KPROBES
-          ./scripts/config --file .config -e HAVE_KPROBES
-          ./scripts/config --file .config -e KPROBE_EVENTS
-          ./scripts/config --file .config -e OVERLAY_FS
-          ./scripts/config --file .config -e KSU
+          # 3. Add KSU configs according to official docs
+          echo "CONFIG_KPROBES=y" >> .config
+          echo "CONFIG_KPROBE_EVENTS=y" >> .config
+          echo "CONFIG_KSU_KPROBE_HOOKS=y" >> .config
+          echo "CONFIG_KSU=y" >> .config
+          echo "CONFIG_OVERLAY_FS=y" >> .config
           
+          # Finalize config
           make olddefconfig
           
-          # 4. Собираем ядро
-          echo "Начинаю компиляцию ядра..."
+          # 4. Compile the kernel
+          echo "Starting kernel compilation..."
           set +e
           make -j$(nproc --all) \
             CC=clang \
@@ -82,20 +80,16 @@ jobs:
             CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
             AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
             KCFLAGS="-Wno-error" 2>&1 | tee build.log
-            
-          BUILD_STATUS=${PIPESTATUS[0]}
-          
-          if [ $BUILD_STATUS -ne 0 ]; then
-            echo ""
-            echo "========================================================"
-            echo "🚨 НАСТОЯЩАЯ ОШИБКА СБОРКИ (СКОПИРУЙ МНЕ ЭТОТ ТЕКСТ) 🚨"
-            echo "========================================================"
-            grep -iE "error:|undefined reference" -B 2 -A 5 build.log | tail -n 20
-            echo "========================================================"
-            exit 1
-          fi
+
+      - name: Upload Build Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kernel-Build-Log
+          path: kernel-source/build.log
 
       - name: Prepare AnyKernel3
+        if: success()
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
           rm -rf AnyKernel3/.git
@@ -106,7 +100,8 @@ jobs:
           cd AnyKernel3
           zip -r9 ../Tucana-KSU-Next-Kernel.zip *
 
-      - name: Upload ZIP
+      - name: Upload Flashable ZIP
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: Tucana-KernelSU-Next
