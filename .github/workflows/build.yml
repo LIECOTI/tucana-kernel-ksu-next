@@ -1,4 +1,4 @@
-name: Build KernelSU Next for Tucana
+name: Build KernelSU Next for Tucana (Manual Hooks)
 
 on:
   workflow_dispatch:
@@ -29,47 +29,45 @@ jobs:
           cd kernel-source
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
 
-      - name: 6. Bruteforce Kconfig & Kbuild & C-Code
+      - name: 6. Inject Manual Hooks (Surgically Precise)
         run: |
           cd kernel-source
           
-          # 1. Фикс бага планировщика
+          # 1. Фикс бага планировщика (NR_CPUS)
           sed -i 's/#if NR_CPUS > 32/#if NR_CPUS > 128/g' include/trace/events/sched.h
           sed -i 's/"Unsupported NR_CPUS for lb tracepoint."/"Bypassed"/g' include/trace/events/sched.h
           
-          # 2. 🔥 ВОЗВРАЩАЕМ РАБОЧИЙ ФИКС КАМЕРЫ 🔥
-          # Кидаем файл прямо в корень, чтобы "./cam_trace.h" 100% сработал!
-          cp drivers/media/platform/msm/camera/cam_utils/cam_trace.h .
-          sed -i 's/#define TRACE_INCLUDE_PATH .*/#define TRACE_INCLUDE_PATH ..\/..\/drivers\/media\/platform\/msm\/camera\/cam_utils/g' drivers/media/platform/msm/camera/cam_utils/cam_trace.h
+          # 2. ФИКС ОШИБКИ КАМЕРЫ
+          mkdir -p include/trace/events
+          cp drivers/media/platform/msm/camera/cam_utils/cam_trace.h include/trace/events/cam_trace.h
           
-          # 3. Вырезаем LTO (главный враг KPROBES)
-          sed -i 's/CONFIG_LTO_CLANG=y/# CONFIG_LTO_CLANG is not set/g' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
-          sed -i 's/CONFIG_LTO=y/# CONFIG_LTO is not set/g' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
+          echo "Внедряю Manual Hooks напрямую в C-код ядра..."
           
-          # 4. Жестко прописываем KPROBES и KSU в конфиг
-          cat <<EOF >> arch/arm64/configs/vendor/tucana.config
-          CONFIG_KPROBES=y
-          CONFIG_HAVE_KPROBES=y
-          CONFIG_KPROBE_EVENTS=y
-          CONFIG_OVERLAY_FS=y
-          CONFIG_KSU=y
-          CONFIG_KSU_KPROBE_HOOKS=y
-          EOF
+          # --- ПАТЧ fs/exec.c ---
+          sed -i '/int do_execve(struct filename \*filename,/i #ifdef CONFIG_KSU\nextern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags);\n#endif' fs/exec.c
+          sed -i '/return do_execveat_common(AT_FDCWD, filename, argv, envp, 0);/i \t#ifdef CONFIG_KSU\n\tksu_handle_execveat((int *)AT_FDCWD, \&filename, \&argv, \&envp, 0);\n\t#endif' fs/exec.c
           
-          # 5. АБСОЛЮТНЫЙ ВЗЛОМ СИСТЕМЫ СБОРКИ KERNELSU
+          # --- ПАТЧ fs/open.c ---
+          sed -i '/SYSCALL_DEFINE3(faccessat, /i #ifdef CONFIG_KSU\nextern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *flags);\n#endif' fs/open.c
+          sed -i '/if (mode & ~S_IRWXO)/i \t#ifdef CONFIG_KSU\n\tksu_handle_faccessat(\&dfd, \&filename, \&mode, NULL);\n\t#endif' fs/open.c
+          
+          # --- ПАТЧ fs/read_write.c ---
+          sed -i '/SYSCALL_DEFINE3(read, /i #ifdef CONFIG_KSU\nextern bool ksu_vfs_read_hook __read_mostly;\nextern int ksu_handle_sys_read(unsigned int fd, char __user **buf_ptr, size_t *count_ptr);\n#endif' fs/read_write.c
+          sed -i '/if (f.file) {/i \t#ifdef CONFIG_KSU\n\tif (unlikely(ksu_vfs_read_hook))\n\t\tksu_handle_sys_read(fd, \&buf, \&count);\n\t#endif' fs/read_write.c
+          
+          # --- ПАТЧ fs/stat.c ---
+          sed -i '/SYSCALL_DEFINE4(newfstatat, /i #ifdef CONFIG_KSU\nextern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);\n#endif' fs/stat.c
+          sed -i '/error = vfs_fstatat(dfd, filename, \&stat, flag);/i \t#ifdef CONFIG_KSU\n\tksu_handle_stat(\&dfd, \&filename, \&flag);\n\t#endif' fs/stat.c
+          
+          # --- ПАТЧ kernel/reboot.c ---
+          sed -i '/SYSCALL_DEFINE4(reboot, /i #ifdef CONFIG_KSU\nextern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);\n#endif' kernel/reboot.c
+          sed -i '/if (!ns_capable(pid_ns->user_ns, CAP_SYS_BOOT))/i \t#ifdef CONFIG_KSU\n\tksu_handle_sys_reboot(magic1, magic2, cmd, \&arg);\n\t#endif' kernel/reboot.c
+          
+          # Очищаем Makefile KSU от ошибки и принудительно собираем его
           sed -i 's/obj-$(CONFIG_KSU) += kernelsu\//obj-y += kernelsu\//g' drivers/Makefile
-          sed -i 's/ifeq ($(CONFIG_KSU_KPROBE_HOOKS),y)/ifeq (y,y)/g' drivers/kernelsu/Kbuild
           sed -i 's/$(error.*No hooks were defined.*)/$(info Bypassed KSU hook check)/g' drivers/kernelsu/Kbuild
-          
-          # 6. АБСОЛЮТНЫЙ ВЗЛОМ С-КОДА KERNELSU
-          # Меняем проверки IS_ENABLED в коде на "Истину" (1), чтобы хуки 100% скомпилировались!
-          find drivers/kernelsu/ -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's/IS_ENABLED(CONFIG_KSU_KPROBE_HOOKS)/1/g' {} +
-          find drivers/kernelsu/ -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's/IS_ENABLED(CONFIG_KPROBES)/1/g' {} +
-          find drivers/kernelsu/ -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's/IS_ENABLED(CONFIG_KPROBE_EVENTS)/1/g' {} +
-          
-          echo "ccflags-y += -DCONFIG_KSU_KPROBE_HOOKS=1 -DCONFIG_KPROBES=1" >> drivers/kernelsu/Kbuild
 
-      - name: 7. Build the Kernel
+      - name: 7. Configure and Build Kernel
         run: |
           cd kernel-source
           
@@ -85,17 +83,23 @@ jobs:
           # Генерируем конфиги
           make vendor/sdmsteppe-perf_defconfig
           scripts/kconfig/merge_config.sh -m .config arch/arm64/configs/vendor/tucana.config
+          
+          # Включаем только KSU (KPROBES нам больше вообще не нужен)
+          echo "CONFIG_KSU=y" >> .config
+          echo "CONFIG_OVERLAY_FS=y" >> .config
+          
           make olddefconfig
           
           # Компиляция
-          echo "Начинаю компиляцию..."
+          echo "Начинаю компиляцию ядра..."
           set +e
           make -j$(nproc --all) \
             CC=clang \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
             AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
-            KCFLAGS="-Wno-error" 2>&1 | tee build.log
+            KCFLAGS="-Wno-error" \
+            CONFIG_KSU=y 2>&1 | tee build.log
             
           BUILD_STATUS=${PIPESTATUS[0]}
           
@@ -119,7 +123,7 @@ jobs:
           
           cat <<EOF > AnyKernel3/anykernel.sh
           properties() { '
-          kernel.string=Tucana KernelSU Next
+          kernel.string=Tucana KernelSU Next (Manual)
           do.devicecheck=1
           do.modules=0
           do.systemless=1
