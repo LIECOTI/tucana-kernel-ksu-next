@@ -33,20 +33,22 @@ jobs:
         run: |
           cd kernel-source
           
-          # 1. Фикс бага планировщика
+          # 1. Фикс бага планировщика (NR_CPUS)
           sed -i 's/#if NR_CPUS > 32/#if NR_CPUS > 128/g' include/trace/events/sched.h
           sed -i 's/"Unsupported NR_CPUS for lb tracepoint."/"Bypassed"/g' include/trace/events/sched.h
           
-          # 2. Отключаем удаление KPROBES из-за защит ядра (LTO и CFI)
-          find arch kernel -type f -name "Kconfig*" -exec sed -i 's/depends on !LTO_CLANG//g' {} +
-          find arch kernel -type f -name "Kconfig*" -exec sed -i 's/depends on !CFI_CLANG//g' {} +
+          # 2. 🔥 ЖЕЛЕЗОБЕТОННЫЙ ФИКС КАМЕРЫ 🔥
+          # Способ А: Меняем путь внутри файла
+          sed -i 's/#define TRACE_INCLUDE_PATH .*/#define TRACE_INCLUDE_PATH ..\/..\/drivers\/media\/platform\/msm\/camera\/cam_utils/g' drivers/media/platform/msm/camera/cam_utils/cam_trace.h
+          # Способ Б: Кидаем файл прямо в корень, чтобы "./cam_trace.h" 100% сработал
+          cp drivers/media/platform/msm/camera/cam_utils/cam_trace.h .
           
-          # 3. Жестко прописываем все зависимости для хуков (KALLSYMS и FTRACE)
+          # 3. Вырезаем LTO (главный враг KPROBES) из базового конфига
+          sed -i 's/CONFIG_LTO_CLANG=y/# CONFIG_LTO_CLANG is not set/g' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
+          sed -i 's/CONFIG_LTO=y/# CONFIG_LTO is not set/g' arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
+          
+          # 4. Жестко прописываем KPROBES и KSU прямо в конфиг телефона
           cat <<EOF >> arch/arm64/configs/vendor/tucana.config
-          CONFIG_MODULES=y
-          CONFIG_KALLSYMS=y
-          CONFIG_KALLSYMS_ALL=y
-          CONFIG_FTRACE=y
           CONFIG_KPROBES=y
           CONFIG_HAVE_KPROBES=y
           CONFIG_KPROBE_EVENTS=y
@@ -55,14 +57,7 @@ jobs:
           CONFIG_KSU_KPROBE_HOOKS=y
           EOF
           
-          # 🔥 4. ВЗЛАМЫВАЕМ ВНЕДРЕНИЕ KERNELSU В ЯДРО 🔥
-          # Заставляем ядро собирать папку kernelsu независимо от того, что думает конфигуратор
-          sed -i 's/obj-\$(CONFIG_KSU) += kernelsu\//obj-y += kernelsu\//g' drivers/Makefile
-          
-          # Передаем флаги напрямую в модуль (чтобы С-код знал, что KSU включен)
-          echo "ccflags-y += -DCONFIG_KSU=1 -DCONFIG_KSU_KPROBE_HOOKS=1" >> drivers/kernelsu/Kbuild
-          
-          # Обходим внутреннюю ошибку KSU
+          # 5. Превращаем фатальную ошибку KernelSU в обычный текст
           sed -i 's/$(error.*No hooks were defined.*)/$(info Bypassed KSU hook check)/g' drivers/kernelsu/Kbuild
 
       - name: 7. Build the Kernel
@@ -75,6 +70,8 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabihf-
           export CC=clang
+          
+          # Фикс утилиты DTC для Ubuntu 22.04
           export HOSTCFLAGS="-fcommon"
           export HOSTCXXFLAGS="-fcommon"
           
@@ -91,7 +88,9 @@ jobs:
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabihf- \
             AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
-            KCFLAGS="-Wno-error" 2>&1 | tee build.log
+            KCFLAGS="-Wno-error" \
+            CONFIG_KSU=y \
+            CONFIG_KSU_KPROBE_HOOKS=y 2>&1 | tee build.log
             
           BUILD_STATUS=${PIPESTATUS[0]}
           
@@ -113,7 +112,7 @@ jobs:
           cp kernel-source/arch/arm64/boot/Image.gz AnyKernel3/ || \
           cp kernel-source/arch/arm64/boot/Image AnyKernel3/
           
-          # Идеальный anykernel.sh от Phobos
+          # Записываем твой чистый AnyKernel3 скрипт!
           cat <<EOF > AnyKernel3/anykernel.sh
           properties() { '
           kernel.string=Tucana KernelSU Next
