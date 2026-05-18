@@ -29,7 +29,7 @@ jobs:
           cd kernel-source
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
 
-      - name: 6. Inject Manual Hooks (Surgically Precise)
+       - name: 6. Inject Manual Hooks (Syntax Fixed)
         run: |
           cd kernel-source
           
@@ -45,28 +45,28 @@ jobs:
           
           # --- ПАТЧ fs/exec.c ---
           sed -i '/int do_execve(struct filename \*filename,/i #ifdef CONFIG_KSU\nextern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags);\n#endif' fs/exec.c
-          sed -i '/return do_execveat_common(AT_FDCWD, filename, argv, envp, 0);/i \t#ifdef CONFIG_KSU\n\tksu_handle_execveat((int *)AT_FDCWD, \&filename, \&argv, \&envp, 0);\n\t#endif' fs/exec.c
+          sed -i '/return do_execveat_common(AT_FDCWD, filename, argv, envp, 0);/i #ifdef CONFIG_KSU\nksu_handle_execveat((int *)AT_FDCWD, \&filename, \&argv, \&envp, 0);\n#endif' fs/exec.c
           
           # --- ПАТЧ fs/open.c ---
           sed -i '/SYSCALL_DEFINE3(faccessat, /i #ifdef CONFIG_KSU\nextern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *flags);\n#endif' fs/open.c
-          sed -i '/if (mode & ~S_IRWXO)/i \t#ifdef CONFIG_KSU\n\tksu_handle_faccessat(\&dfd, \&filename, \&mode, NULL);\n\t#endif' fs/open.c
+          sed -i '/if (mode & ~S_IRWXO)/i #ifdef CONFIG_KSU\nksu_handle_faccessat(\&dfd, \&filename, \&mode, NULL);\n#endif' fs/open.c
           
           # --- ПАТЧ fs/read_write.c ---
           sed -i '/SYSCALL_DEFINE3(read, /i #ifdef CONFIG_KSU\nextern bool ksu_vfs_read_hook __read_mostly;\nextern int ksu_handle_sys_read(unsigned int fd, char __user **buf_ptr, size_t *count_ptr);\n#endif' fs/read_write.c
-          sed -i '/if (f.file) {/i \t#ifdef CONFIG_KSU\n\tif (unlikely(ksu_vfs_read_hook))\n\t\tksu_handle_sys_read(fd, \&buf, \&count);\n\t#endif' fs/read_write.c
+          sed -i '/if (f.file) {/i #ifdef CONFIG_KSU\nif (unlikely(ksu_vfs_read_hook))\nksu_handle_sys_read(fd, \&buf, \&count);\n#endif' fs/read_write.c
           
           # --- ПАТЧ fs/stat.c ---
           sed -i '/SYSCALL_DEFINE4(newfstatat, /i #ifdef CONFIG_KSU\nextern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);\n#endif' fs/stat.c
-          sed -i '/error = vfs_fstatat(dfd, filename, \&stat, flag);/i \t#ifdef CONFIG_KSU\n\tksu_handle_stat(\&dfd, \&filename, \&flag);\n\t#endif' fs/stat.c
+          sed -i '/error = vfs_fstatat(dfd, filename, \&stat, flag);/i #ifdef CONFIG_KSU\nksu_handle_stat(\&dfd, \&filename, \&flag);\n#endif' fs/stat.c
           
           # --- ПАТЧ kernel/reboot.c ---
           sed -i '/SYSCALL_DEFINE4(reboot, /i #ifdef CONFIG_KSU\nextern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);\n#endif' kernel/reboot.c
-          sed -i '/if (!ns_capable(pid_ns->user_ns, CAP_SYS_BOOT))/i \t#ifdef CONFIG_KSU\n\tksu_handle_sys_reboot(magic1, magic2, cmd, \&arg);\n\t#endif' kernel/reboot.c
+          sed -i '/if (!ns_capable(pid_ns->user_ns, CAP_SYS_BOOT))/i #ifdef CONFIG_KSU\nksu_handle_sys_reboot(magic1, magic2, cmd, \&arg);\n#endif' kernel/reboot.c
           
           # Очищаем Makefile KSU от ошибки и принудительно собираем его
           sed -i 's/obj-$(CONFIG_KSU) += kernelsu\//obj-y += kernelsu\//g' drivers/Makefile
           sed -i 's/$(error.*No hooks were defined.*)/$(info Bypassed KSU hook check)/g' drivers/kernelsu/Kbuild
-
+      
       - name: 7. Configure and Build Kernel
         run: |
           cd kernel-source
